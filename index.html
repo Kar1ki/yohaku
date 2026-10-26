@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="余白">
+<meta name="theme-color" content="#1b1b1b">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<title>余白</title>
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="web.css">
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-home" viewBox="0 0 24 24"><path d="M4 11l8-7 8 7v8a1 1 0 01-1 1h-4v-6H9v6H5a1 1 0 01-1-1z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></symbol>
+    <symbol id="i-open" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8z M14 3v5h5 M12 11v6 M9 14h6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-left" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M9.5 4.5v15" stroke="currentColor" stroke-width="1.7"/></symbol>
+    <symbol id="i-right" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M14.5 4.5v15" stroke="currentColor" stroke-width="1.7"/></symbol>
+    <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z" fill="none" stroke="currentColor" stroke-width="1.5"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8z M14 3v5h5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></symbol>
+    <symbol id="i-prev" viewBox="0 0 24 24"><path d="M14.5 6.5L9 12l5.5 5.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-next" viewBox="0 0 24 24"><path d="M9.5 6.5L15 12l-5.5 5.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-fitpage" viewBox="0 0 24 24"><rect x="6.5" y="3.5" width="11" height="17" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.7"/></symbol>
+    <symbol id="i-fitwidth" viewBox="0 0 24 24"><path d="M3.5 12h17M7 8.5L3.5 12 7 15.5M17 8.5l3.5 3.5-3.5 3.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-bm" viewBox="0 0 24 24"><path d="M6.5 3.5h11v17l-5.5-4-5.5 4z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></symbol>
+    <symbol id="i-full" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-export" viewBox="0 0 24 24"><path d="M12 15V3.5M7.5 8L12 3.5 16.5 8M5 13v6a2 2 0 002 2h10a2 2 0 002-2v-6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-hand" viewBox="0 0 24 24"><path d="M5 3.5l13 7-5.5 1.5L10 18z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></symbol>
+    <symbol id="i-pen" viewBox="0 0 24 24"><path d="M4 20l1-4L16 5l3 3L8 19z M14 7l3 3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></symbol>
+    <symbol id="i-marker" viewBox="0 0 24 24"><path d="M9 15l-2.5 5h5l1.2-2.8M9 15l7-11 4 3-6.5 10.2z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></symbol>
+    <symbol id="i-eraser" viewBox="0 0 24 24"><path d="M8 20h12M4.5 15.5l9-10 6.5 6-8.5 8.5H8.5z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></symbol>
+    <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 14L4 9l5-5M4 9h10.5a5.5 5.5 0 010 11H11" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-tr" viewBox="0 0 24 24"><path d="M4 5h9M8.5 3v2M6 5c.6 3.2 2.8 5.8 6 7M11 5c-.8 3.4-3.4 6.2-7 8M13 21l4-10 4 10M14.5 17.5h5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-note" viewBox="0 0 24 24"><path d="M5 4.5h14v11l-4 4H5z M15 19.5v-4h4 M8.5 9h7M8.5 12.5h4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M16 8V6a2 2 0 00-2-2H6a2 2 0 00-2 2v8a2 2 0 002 2h2" fill="none" stroke="currentColor" stroke-width="1.7"/></symbol>
+    <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><circle cx="16" cy="7" r="2" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="10" cy="17" r="2" fill="none" stroke="currentColor" stroke-width="1.7"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4.5 7h15M10 11v6M14 11v6M6 7l1 12.5A1.5 1.5 0 008.5 21h7a1.5 1.5 0 001.5-1.5L18 7M9 7V4.5h6V7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M16 16l4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+    <symbol id="i-dots" viewBox="0 0 24 24"><circle cx="6" cy="12" r="1.6" fill="currentColor"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/><circle cx="18" cy="12" r="1.6" fill="currentColor"/></symbol>
+    <symbol id="i-ul" viewBox="0 0 24 24"><path d="M7 4v7a5 5 0 0010 0V4M5 20h14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+    <symbol id="i-hl" viewBox="0 0 24 24"><rect x="3" y="8" width="18" height="9" rx="1.5" fill="currentColor" opacity=".35"/><path d="M6 13h12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+    <symbol id="i-cloud" viewBox="0 0 24 24"><path d="M7 18.5h10.5a4 4 0 00.6-7.95A6 6 0 006.4 9.1 4.75 4.75 0 007 18.5z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path class="ck" d="M9.5 13.5l2 2 3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-md" viewBox="0 0 24 24"><rect x="2.5" y="5.5" width="19" height="13" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M6 15V9l2.5 3L11 9v6M15.5 9v6M13.5 13l2 2 2-2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  </defs>
+</svg>
+
+<div class="app" id="app">
+  <!-- リボン -->
+  <nav class="ribbon" aria-label="メニュー">
+    <button class="ib" id="rbHome" title="ホーム"><svg><use href="#i-home"/></svg></button>
+    <button class="ib" id="rbOpen" title="PDFを開く (Ctrl+O)"><svg><use href="#i-open"/></svg></button>
+    <button class="ib" id="rbLeft" title="左パネル (Ctrl+[)"><svg><use href="#i-left"/></svg></button>
+    <button class="ib" id="rbRight" title="メモパネル (Ctrl+])"><svg><use href="#i-right"/></svg></button>
+    <span class="grow"></span>
+    <button class="ib" id="rbSync" hidden title="同期"><svg><use href="#i-cloud"/></svg></button>
+    <button class="ib" id="rbSettings" title="設定 (Ctrl+,)"><svg><use href="#i-gear"/></svg></button>
+  </nav>
+
+  <!-- 左パネル: ファイル・目次・しおり -->
+  <aside class="side left" id="leftSide">
+    <div class="sidehead">
+      <div class="stabs" role="tablist">
+        <button class="stab" role="tab" data-ltab="files">ファイル</button>
+        <button class="stab doconly" role="tab" data-ltab="toc">目次</button>
+        <button class="stab doconly" role="tab" data-ltab="bm">しおり<span class="n" id="bmCount"></span></button>
+      </div>
+    </div>
+    <div class="sidetool" id="fileTool">
+      <label class="search"><svg><use href="#i-search"/></svg><input id="fileFilter" placeholder="ファイルを絞り込む" spellcheck="false"></label>
+    </div>
+    <div class="sidebody" id="leftBody"></div>
+  </aside>
+  <div class="resizer" data-side="left"></div>
+
+  <!-- 本文 -->
+  <main class="main" id="main">
+    <header class="viewhead" id="viewHead">
+      <div class="navgrp doconly">
+        <button class="ib" id="prevBtn" title="前のページ (←)"><svg><use href="#i-prev"/></svg></button>
+        <button class="ib" id="nextBtn" title="次のページ (→)"><svg><use href="#i-next"/></svg></button>
+        <div class="pageno"><input id="pageInput" inputmode="numeric" aria-label="ページ番号"><span>/ <span id="pageCount">–</span></span></div>
+      </div>
+      <div class="crumb" id="crumb"><b>ホーム</b></div>
+      <div class="actgrp doconly">
+        <button class="ib" id="fitBtn" title="表示サイズ"><svg><use id="fitUse" href="#i-fitpage"/></svg></button>
+        <button class="ib" id="bmBtn" aria-pressed="false" title="このページをしおりに追加 (B)"><svg><use href="#i-bm"/></svg></button>
+        <button class="ib" id="fsBtn" title="全画面 (F11)"><svg><use href="#i-full"/></svg></button>
+        <button class="ib" id="exportBtn" title="注釈付きPDFを書き出す"><svg><use href="#i-export"/></svg></button>
+      </div>
+    </header>
+
+    <!-- ホーム -->
+    <section class="home" id="home">
+      <div class="homein">
+        <div class="hello"><h1 id="helloTitle">余白</h1><p id="helloSub">読みかけのPDF</p></div>
+        <div class="homeacts">
+          <button class="tb primary" id="homeOpen"><svg><use href="#i-open"/></svg>PDFを開く</button>
+          <button class="tb" id="homeSettings"><svg><use href="#i-gear"/></svg>設定</button>
+        </div>
+        <div class="grid" id="homeGrid"></div>
+        <div class="homeempty" id="homeEmpty" hidden>
+          <b>まだPDFがありません</b>
+          「PDFを開く」から選ぶか、エクスプローラーからこの画面にドラッグしてください。<br>
+          PDFを右クリック →「プログラムから開く」→「余白」でも追加できます。元のファイルには書き込みません。
+          <div style="margin-top:16px"><button class="tb" id="sampleBtn">使い方サンプルを開く</button></div>
+        </div>
+        <div class="droptip">元のPDFファイルには書き込みません · <span class="kbd">Ctrl</span> <span class="kbd">O</span> で開く</div>
+      </div>
+    </section>
+
+    <!-- リーダー -->
+    <section class="viewbody" id="reader" hidden>
+      <div id="stage"><div id="wrap"><div id="page">
+        <canvas id="pdfCanvas"></canvas>
+        <canvas id="markCanvas"></canvas>
+        <div class="textLayer" id="textLayer"></div>
+        <div id="memoLayer"></div>
+        <canvas id="inkCanvas"></canvas>
+        <canvas id="liveCanvas"></canvas>
+      </div></div><div class="msg" id="msg" hidden></div></div>
+
+      <div class="toolpill" id="toolBar" role="toolbar" aria-label="ツール">
+        <button class="ib" data-tool="select" aria-pressed="true" title="選択・読む (V)"><svg><use href="#i-hand"/></svg></button>
+        <button class="ib" data-tool="pen" aria-pressed="false" title="ペン (P)"><svg><use href="#i-pen"/></svg></button>
+        <button class="ib" data-tool="hl" aria-pressed="false" title="マーカー (H)"><svg><use href="#i-marker"/></svg></button>
+        <button class="ib" data-tool="eraser" aria-pressed="false" title="消しゴム (E)"><svg><use href="#i-eraser"/></svg></button>
+        <span class="sepv"></span>
+        <button class="swatch" id="colorBtn" title="色と太さ"></button>
+        <span class="sepv"></span>
+        <button class="chip" id="fingerBtn" aria-pressed="false" title="タッチ操作でも描く">タッチで描く</button>
+        <button class="ib" id="undoBtn" title="元に戻す (Ctrl+Z)"><svg><use href="#i-undo"/></svg></button>
+      </div>
+    </section>
+    <div class="status doconly" id="status"></div>
+  </main>
+  <div class="resizer" data-side="right"></div>
+
+  <!-- 右パネル: メモ・ハイライト -->
+  <aside class="side right" id="rightSide">
+    <div class="sidehead">
+      <div class="stabs" role="tablist">
+        <button class="stab" role="tab" data-rtab="memos">メモ<span class="n" id="memoCount"></span></button>
+        <button class="stab" role="tab" data-rtab="marks">ハイライト<span class="n" id="markCount"></span></button>
+      </div>
+    </div>
+    <div class="sidetool doconly"><label class="search"><svg><use href="#i-search"/></svg><input id="memoFilter" placeholder="メモを検索" spellcheck="false"></label></div>
+    <div class="sidebody" id="rightBody"></div>
+    <div class="sidefoot doconly" id="rightFoot">
+      <button class="tb ghost" id="mdCopy" title="Obsidianなどに貼り付けられる形でコピー"><svg><use href="#i-copy"/></svg>Markdownでコピー</button>
+      <button class="tb ghost" id="mdSave"><svg><use href="#i-md"/></svg>.mdで保存</button>
+    </div>
+  </aside>
+</div>
+
+<input id="fileInput" type="file" accept="application/pdf,.pdf" multiple hidden>
+
+<!-- 文字を選んだとき -->
+<div class="float selpop" id="selBar" hidden>
+  <button class="chip" id="trBtn" title="その場で翻訳 (T)"><svg><use href="#i-tr"/></svg>翻訳</button>
+  <span class="sepv"></span>
+  <span id="selDots" style="display:flex;align-items:center"></span>
+  <button class="chip" id="memoBtn" title="ハイライトしてメモを書く (M)"><svg><use href="#i-note"/></svg>メモ</button>
+  <button class="chip" id="ulBtn" title="下線 (U)"><svg><use href="#i-ul"/></svg>下線</button>
+  <button class="chip" id="selBmBtn" title="この文をしおりに"><svg><use href="#i-bm"/></svg>しおり</button>
+</div>
+
+<!-- ハイライト直後: メモを追加するか -->
+<div class="float ask" id="askMemo" hidden>
+  <span>メモを追加しますか？</span>
+  <button class="tb primary" id="askYes"><svg><use href="#i-note"/></svg>メモを追加</button>
+  <button class="tb ghost" id="askNo">しない</button>
+</div>
+
+<!-- ハイライトをクリックしたとき -->
+<div class="float anno" id="annoCard" hidden role="dialog" aria-label="ハイライト">
+  <div class="q" id="acQuote"></div>
+  <div class="memo" id="acMemo"></div>
+  <textarea id="acEdit" placeholder="メモを書く…" hidden></textarea>
+  <div class="bar" id="acBarView">
+    <span id="acDots" style="display:flex;align-items:center"></span>
+    <button class="ib" id="acType" title="下線とハイライトを切り替え"><svg><use id="acTypeUse" href="#i-ul"/></svg></button>
+    <span class="sp"></span>
+    <button class="tb ghost" id="acEditBtn"><svg><use href="#i-edit"/></svg><span id="acEditLbl">メモを追加</span></button>
+    <button class="ib" id="acDel" title="ハイライトを削除"><svg><use href="#i-trash"/></svg></button>
+  </div>
+  <div class="bar" id="acBarEdit" hidden>
+    <span class="hint"><span class="kbd">Ctrl</span> <span class="kbd">Enter</span> で保存</span>
+    <span class="sp"></span>
+    <button class="tb ghost" id="acCancel">キャンセル</button>
+    <button class="tb primary" id="acSave">保存</button>
+  </div>
+</div>
+<div class="tip" id="tip" hidden></div>
+
+<!-- 色・太さ -->
+<div class="float palette" id="palette" hidden>
+  <div class="row" id="palDots"></div>
+  <div class="widths" id="widths"></div>
+</div>
+
+<!-- 翻訳 -->
+<div class="float trpop" id="trPop" hidden role="dialog" aria-label="翻訳">
+  <div class="trhead">
+    <span class="lang" id="trLang"></span><span id="trEng"></span><span class="sp"></span>
+    <button class="ib" id="trCopy" title="訳文をコピー"><svg><use href="#i-copy"/></svg></button>
+    <button class="ib" id="trSet" title="翻訳の設定"><svg><use href="#i-sliders"/></svg></button>
+    <button class="ib" id="trClose" title="閉じる (Esc)"><svg><use href="#i-x"/></svg></button>
+  </div>
+  <div class="trbody" id="trBody"></div>
+  <div class="trsrc" id="trSrc"></div>
+</div>
+
+<!-- ファイルの「…」メニュー -->
+<div class="float menu" id="fileMenu" hidden></div>
+
+<!-- 設定 -->
+<div class="scrim" id="settings" hidden>
+  <div class="setwin" role="dialog" aria-label="設定">
+    <nav class="setnav">
+      <h4>設定</h4>
+      <button data-set="look">外観</button>
+      <button data-set="read">読書と注釈</button>
+      <button data-set="sync">同期</button>
+      <button data-set="tr">翻訳</button>
+      <button data-set="about">このアプリについて</button>
+    </nav>
+    <div class="setmain">
+      <button class="ib setclose" id="setClose" title="閉じる (Esc)"><svg><use href="#i-x"/></svg></button>
+      <div id="setBody"></div>
+    </div>
+  </div>
+</div>
+
+<div class="scrim" id="scrim" hidden><div class="sheet" id="sheet"></div></div>
+<div class="toast" id="toast" hidden></div>
+
+<script src="pdf.min.js"></script>
+<script src="drive-core.js"></script>
+<script src="platform-web.js"></script>
+<script src="app.js"></script>
+<script>if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('sw.js').catch(()=>{});</script>
+</body>
+</html>

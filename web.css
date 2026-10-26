@@ -1,0 +1,6 @@
+/* iPad版だけの調整: 画面の角(セーフエリア)をよける */
+html,body{height:100%}
+body{box-sizing:border-box;padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) env(safe-area-inset-bottom,0px) env(safe-area-inset-left,0px);background:var(--ribbon);-webkit-text-size-adjust:100%}
+.app{height:100%}
+#page canvas{-webkit-touch-callout:none}
+.toolpill{bottom:12px}
