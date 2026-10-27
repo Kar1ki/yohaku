@@ -1,5 +1,5 @@
 // 余白 iPad版 — オフラインでも開けるように、アプリ本体をキャッシュする(Googleとの通信はキャッシュしない)
-const VERSION = 'yohaku-web-2.3.2';
+const VERSION = 'yohaku-web-2.3.3';
 const SHELL = ['./', './index.html', './style.css', './web.css', './app.js', './drive-core.js', './platform-web.js',
   './pdf.min.js', './pdf.worker.min.js', './pdf-lib.min.js', './sample.pdf', './manifest.webmanifest', './icon-180.png', './icon-192.png', './icon-512.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(VERSION).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())); });

@@ -71,9 +71,35 @@
     cmapUrl: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/cmaps/',
     fontsUrl: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/standard_fonts/',
     saveNeedsTap: true,
+    // その場で翻訳: 「翻訳」を押したときだけ、選んだ文をGoogle翻訳に送る(PDF本体は送らない)
+    translate: (() => {
+      const cache = new Map();
+      return async (text, tl) => {
+        text = String(text || '').slice(0, 5000); tl = tl === 'en' ? 'en' : 'ja';
+        const k = tl + '|' + text; if (cache.has(k)) return cache.get(k);
+        const base = 'https://translate.googleapis.com/translate_a/single?client=gtx&dt=t&sl=auto&tl=' + tl;
+        try {
+          const q = encodeURIComponent(text);
+          const ctl = new AbortController(); const tm = setTimeout(() => ctl.abort(), 15000);
+          const res = q.length < 1800 ? await fetch(base + '&q=' + q, { signal: ctl.signal })
+            : await fetch(base, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' }, body: 'q=' + q, signal: ctl.signal });
+          clearTimeout(tm);
+          if (res.status === 429) return { error: '翻訳サービスが混み合っています。少し待ってからもう一度押してください。', code: 'busy' };
+          if (!res.ok) return { error: '翻訳サービスから応答がありませんでした（' + res.status + '）。', code: 'http' };
+          const d = await res.json();
+          const out = (d[0] || []).map(x => x && x[0] || '').join('');
+          if (!out) return { error: '翻訳結果が空でした。', code: 'empty' };
+          const r = { text: out, detected: d[2] || '', engine: 'Google 翻訳' };
+          if (cache.size > 200) cache.delete(cache.keys().next().value);
+          cache.set(k, r); return r;
+        } catch (e) {
+          return { error: navigator.onLine === false ? 'オフラインのため翻訳できません。' : '翻訳できませんでした。通信状態を確認して、もう一度押してください。', code: 'net' };
+        }
+      };
+    })(),
     savePdf: (name, data) => share(name, data, 'application/pdf'),
     saveText: (name, text) => share(name, text, 'text/markdown'),
-    appInfo: async () => ({ version: '2.3.2（iPad版）', dataPath: '' }),
+    appInfo: async () => ({ version: '2.3.3（iPad版）', dataPath: '' }),
     syncConfig: async () => { await ready; return info(); },
     syncSetClient: async o => {
       o = o || {};

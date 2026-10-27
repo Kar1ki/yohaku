@@ -195,7 +195,7 @@ function closeDoc(){
   hideAllFloats();hideTr();clearBmp();
   if(S.pdf){try{S.pdf.destroy()}catch(e){}S.pdf=null}
   S.id=null;S.meta=null;S.notes=null;S.outline=null;
-  pagesEl.innerHTML='';PV=[];pageBase=[];S.rendered.clear();
+  pagesEl.innerHTML='';PV=[];pageBase=[];S.rendered.clear();charModels.clear();tsel=null;tselChars=null;
 }
 async function openBook(id){
   const meta=await DB.get('meta',id),blob=await DB.get('blobs',id);
@@ -430,6 +430,7 @@ async function renderPage(n){
   pv.W=bm.W;pv.H=bm.H;pv.key=key;pv.busy=null;
   drawMarksFor(n);drawInkFor(n);
   renderText(n,sc);
+  if(TOUCH)charModel(n).catch(()=>{});
 }
 function unrenderPage(n){
   const pv=PV[n];if(!pv)return;
@@ -755,7 +756,7 @@ function selInfo(){
   if(!tl||!pagesEl.contains(tl))return null;
   return {range:r,n:+tl.parentElement.dataset.n};
 }
-function hasSel(){return !!selInfo()}
+function hasSel(){return !!tsel||!!selInfo()}
 let selRange=null,selText='',selPage=0;
 document.addEventListener('selectionchange',()=>{
   fixSelectionEnd();
@@ -810,7 +811,7 @@ function textClientRects(range,layer){
   }
   return out;
 }
-function selClientRects(){const pv=PV[selPage];return selRange&&pv?textClientRects(selRange,pv.text):[]}
+function selClientRects(){if(tsel)return tselClientRects();const pv=PV[selPage];return selRange&&pv?textClientRects(selRange,pv.text):[]}
 function bounds(){const r=stage.getBoundingClientRect();return{top:r.top+6,bottom:r.bottom-62,left:r.left+6,right:r.right-6}}
 // 浮かぶ部品を目印(anchor)の上か下に置く
 function placeNear(el,a,prefer){
@@ -827,7 +828,8 @@ function popIn(el){if(!motionOK())return;el.classList.remove('show');void el.off
 function showSelBar(){
   const bar=$('selBar'),rs=selClientRects();if(!rs.length){bar.hidden=true;return}
   const wasHidden=bar.hidden;bar.hidden=false;
-  bar.dataset.side=placeNear(bar,unionRect(rs),TOUCH?'below':'above');
+  const u=unionRect(rs);if(tsel)u.bottom+=22,u.top-=22;  // つまみに重ならないように
+  bar.dataset.side=placeNear(bar,u,TOUCH?'below':'above');
   if(wasHidden)popIn(bar);
 }
 function cleanText(t){return t.replace(/-\s*\n\s*/g,'').replace(/\s+/g,' ').trim()}
@@ -849,10 +851,10 @@ function selRects(range,pv){
   const f=v=>+v.toFixed(5);
   return lines.map(l=>[f(l.x/W),f(l.y/H),f(l.w/W),f(l.h/H)]);
 }
-function clearSel(){window.getSelection()?.removeAllRanges();selRange=null;$('selBar').hidden=true}
+function clearSel(){window.getSelection()?.removeAllRanges();selRange=null;clearTsel();$('selBar').hidden=true}
 function addMark(type,ci,opt={}){
-  const pv=PV[selPage];if(!selRange||!pv)return null;
-  const r=selRects(selRange,pv);if(!r.length){toast('この部分には印を付けられません');return null}
+  const pv=PV[selPage];if((!selRange&&!tsel)||!pv)return null;
+  const r=tsel?tselFracRects():selRects(selRange,pv);if(!r.length){toast('この部分には印を付けられません');return null}
   const m={id:newId(),t:type,ci,r,text:selText.slice(0,1000),at:Date.now()};touch(m);
   pageArr('marks',pv.n).push(m);S.undo.push({page:pv.n,kind:'marks',added:m});
   prefs.markCi=ci;savePrefs();renderSelDots();
@@ -868,10 +870,184 @@ function renderSelDots(){
     b.addEventListener('pointerdown',e=>e.preventDefault());
     b.onclick=()=>addMark('hl',i);box.appendChild(b)});
 }
-for(const id of ['ulBtn','selBmBtn','trBtn','memoBtn'])$(id).addEventListener('pointerdown',e=>e.preventDefault());
+for(const id of ['ulBtn','selBmBtn','trBtn','memoBtn','copyBtn'])$(id).addEventListener('pointerdown',e=>e.preventDefault());
 $('ulBtn').onclick=()=>addMark('ul',prefs.markCi);
 $('memoBtn').onclick=()=>addMark('hl',prefs.markCi,{memo:true});
+$('copyBtn').onclick=async()=>{if(!selText)return;try{await navigator.clipboard.writeText(selText);toast('コピーしました')}catch(e){toast('コピーできませんでした')}};
 $('selBmBtn').onclick=()=>{addBookmark(selPage||S.page,selText.slice(0,120));clearSel()};
+
+/* ===================== iPad: 余白専用の文字選択 =====================
+   iOS標準の選択は、行の右端まで青く伸びたり、iOSのメニューが余白のバーに重なったりするため、
+   タッチ端末では自前で選ぶ。PDFの文字の位置を1文字ずつ計算し、
+   長押しで単語を選び、そのまま指を動かすか、両端のつまみを動かして範囲を広げる。
+   Apple Pencilは長押しせず、なぞるだけで選べる。 */
+const charModels=new Map();   // ページ番号 → そのページの文字の位置(ページに対する割合)
+let tsel=null;                // {n, a, b} a〜bの文字(両端を含む)を選択中
+const measureCtx=document.createElement('canvas').getContext('2d');
+function charModel(n){
+  if(charModels.has(n))return charModels.get(n);
+  const pr=(async()=>{
+    const page=await S.pdf.getPage(n),vp=page.getViewport({scale:1}),tc=await page.getTextContent();
+    const W=vp.width,H=vp.height,chars=[];
+    for(const it of tc.items){
+      if(!('str' in it))continue;
+      if(!it.str){if(it.hasEOL&&chars.length)chars[chars.length-1].eol=true;continue}
+      const tx=pdfjsLib.Util.transform(vp.transform,it.transform);
+      if(Math.abs(Math.atan2(tx[1],tx[0]))>0.1)continue;  // 斜めや縦書きは選択の対象外
+      const st=tc.styles[it.fontName]||{},fh=Math.hypot(tx[2],tx[3]);
+      if(!fh||!it.width)continue;
+      const asc=st.ascent||0.8,desc=st.descent||-0.2;
+      const top=tx[5]-fh*asc,bot=tx[5]-fh*desc;
+      const cs=Array.from(it.str);
+      measureCtx.font='100px '+(st.fontFamily||'serif');
+      const ws=cs.map(c=>Math.max(1,measureCtx.measureText(c).width)),sum=ws.reduce((a,b)=>a+b,0);
+      const k=it.width/sum;let x=tx[4];
+      cs.forEach((c,i)=>{const w=ws[i]*k;chars.push({ch:c,x0:x/W,x1:(x+w)/W,t:top/H,b:bot/H,fh:fh/H});x+=w});
+      if(it.hasEOL)chars[chars.length-1].eol=true;
+    }
+    return chars;
+  })();
+  charModels.set(n,pr);pr.catch(()=>charModels.delete(n));
+  return pr;
+}
+const isSpace=c=>/\s/.test(c.ch);
+const sameLine=(p,c)=>!p.eol&&Math.abs((p.t+p.b)/2-(c.t+c.b)/2)<Math.min(p.b-p.t,c.b-c.t)*.5&&c.x0>p.x0-(p.b-p.t)*.5;
+// 指の位置に一番近い文字
+function nearestChar(chars,px,py){
+  let best=-1,bd=Infinity;
+  for(let i=0;i<chars.length;i++){
+    const c=chars[i];if(isSpace(c))continue;
+    const dy=Math.max(0,c.t-py,py-c.b),dx=Math.max(0,c.x0-px,px-c.x1);
+    const d=dy*4+dx;if(d<bd){bd=d;best=i}
+  }
+  return best;
+}
+// 指の位置が、どの文字の「前」に当たるか(範囲の端を決める)
+function caretAt(chars,px,py,isEnd){
+  const i=nearestChar(chars,px,py);if(i<0)return -1;
+  const c=chars[i],mid=(c.x0+c.x1)/2;
+  if(isEnd)return px<mid&&i>0&&sameLine(chars[i-1],c)?i-1:i;
+  return px>mid&&i<chars.length-1&&sameLine(c,chars[i+1])?i+1:i;
+}
+function wordAround(chars,i){
+  const cls=ch=>/[A-Za-z0-9À-ɏ'’\-]/.test(ch)?'w':/[぀-ゟ]/.test(ch)?'h':/[゠-ヿㇰ-ㇿー]/.test(ch)?'k':/[㐀-鿿豈-﫿々〆]/.test(ch)?'j':'o';
+  const k=cls(chars[i].ch);if(k==='o')return [i,i];
+  let a=i,b=i;
+  while(a>0&&!chars[a-1].eol&&sameLine(chars[a-1],chars[a])&&cls(chars[a-1].ch)===k)a--;
+  while(b<chars.length-1&&!chars[b].eol&&sameLine(chars[b],chars[b+1])&&cls(chars[b+1].ch)===k)b++;
+  return [a,b];
+}
+// 選んだ範囲 → 1行に1つの四角形(ページに対する割合)
+function tselLines(chars,a,b){
+  const lines=[];let cur=null;
+  for(let i=a;i<=b;i++){
+    const c=chars[i];
+    if(cur&&!sameLine(chars[i-1],c)){lines.push(cur);cur=null}
+    if(isSpace(c))continue;
+    if(!cur)cur={x0:c.x0,x1:c.x1,t:c.t,b:c.b};
+    else{cur.x1=Math.max(cur.x1,c.x1);cur.x0=Math.min(cur.x0,c.x0);cur.t=Math.min(cur.t,c.t);cur.b=Math.max(cur.b,c.b)}
+  }
+  if(cur)lines.push(cur);
+  return lines;
+}
+function tselText(chars,a,b){
+  let s='';
+  for(let i=a;i<=b;i++){
+    const c=chars[i];s+=c.ch;
+    if(i<b){const d=chars[i+1];
+      if(c.eol||!sameLine(c,d))s+='\n';
+      else if(!isSpace(c)&&!isSpace(d)&&d.x0-c.x1>c.fh*.15)s+=' ';}
+  }
+  return s;
+}
+let tselChars=null;
+function tselLayer(pv){
+  let L=pv.el.querySelector('.tsel');
+  if(!L){L=document.createElement('div');L.className='tsel';pv.el.appendChild(L);
+    for(const end of ['s','e']){const h=document.createElement('b');h.className='hdl '+end;h.dataset.end=end;L.appendChild(h)}}
+  return L;
+}
+function drawTsel(){
+  document.querySelectorAll('.tsel').forEach(L=>{if(!tsel||L.parentElement!==PV[tsel.n]?.el)L.remove()});
+  if(!tsel)return;
+  const pv=PV[tsel.n];if(!pv)return;
+  const L=tselLayer(pv),lines=tselLines(tselChars,tsel.a,tsel.b);
+  L.querySelectorAll('i').forEach(x=>x.remove());
+  const P=v=>(v*100)+'%';
+  for(const l of lines){const r=document.createElement('i');r.style.left=P(l.x0);r.style.top=P(l.t);r.style.width=P(l.x1-l.x0);r.style.height=P(l.b-l.t);L.prepend(r)}
+  const f=lines[0],z=lines[lines.length-1],hs=L.querySelector('.hdl.s'),he=L.querySelector('.hdl.e');
+  if(!f){hs.hidden=he.hidden=true;return}
+  hs.hidden=he.hidden=false;
+  hs.style.left=P(f.x0);hs.style.top=P(f.t);hs.style.height=P(f.b-f.t);
+  he.style.left=P(z.x1);he.style.top=P(z.t);he.style.height=P(z.b-z.t);
+}
+function setTsel(n,a,b,show){
+  if(a>b)[a,b]=[b,a];
+  tsel={n,a,b};selPage=n;selRange=null;
+  selText=cleanText(tselText(tselChars,a,b));
+  drawTsel();
+  if(show!==false&&selText){hideAsk();if(!$('annoCard').hidden&&!annoEditing())hideAnno();$('palette').hidden=true;showSelBar()}
+}
+function clearTsel(){if(!tsel)return;tsel=null;tselChars=null;drawTsel()}
+function tselClientRects(){
+  const pv=PV[tsel.n];if(!pv)return[];const r=pv.el.getBoundingClientRect();
+  return tselLines(tselChars,tsel.a,tsel.b).map(l=>({left:r.left+l.x0*r.width,right:r.left+l.x1*r.width,top:r.top+l.t*r.height,bottom:r.top+l.b*r.height}));
+}
+function tselFracRects(){const f=v=>+v.toFixed(5);return tselLines(tselChars,tsel.a,tsel.b).map(l=>[f(l.x0),f(l.t),f(l.x1-l.x0),f(l.b-l.t)])}
+if(TOUCH){
+  document.body.classList.add('tselmode');
+  let lp=null,drag=null;
+  const frac=(t,pv)=>{const r=pv.el.getBoundingClientRect();return[(t.clientX-r.left)/r.width,(t.clientY-r.top)/r.height]};
+  async function beginAt(pv,t,word){
+    let chars;try{chars=await charModel(pv.n)}catch(e){return false}
+    const [px,py]=frac(t,pv),i=nearestChar(chars,px,py);if(i<0)return false;
+    const c=chars[i];if(py<c.t-c.fh*1.2||py>c.b+c.fh*1.2)return false;  // 文字から離れた場所では選ばない
+    clearSel();tselChars=chars;
+    const [a,b]=word?wordAround(chars,i):[i,i];
+    drag={n:pv.n,fixed:a,which:'e',id:t.identifier,anchorEnd:b};
+    setTsel(pv.n,a,b,false);suppressClickUntil=Date.now()+600;
+    return true;
+  }
+  function moveTo(t){
+    if(!drag||!tsel||!tselChars)return;
+    const pv=PV[drag.n];if(!pv)return;
+    const [px,py]=frac(t,pv);
+    if(drag.which==='e'){const j=caretAt(tselChars,px,py,true);if(j<0)return;
+      if(j>=drag.fixed)setTsel(drag.n,drag.fixed,Math.max(j,drag.anchorEnd??j),false);else setTsel(drag.n,j,drag.anchorEnd??drag.fixed,false)}
+    else{const j=caretAt(tselChars,px,py,false);if(j<0)return;setTsel(drag.n,j,drag.fixed,false)}
+    $('selBar').hidden=true;
+  }
+  pagesEl.addEventListener('touchstart',e=>{
+    if(isDrawTool()||e.touches.length!==1){if(lp){clearTimeout(lp.timer);lp=null}return}
+    const t=e.changedTouches[0],h=e.target.closest&&e.target.closest('.hdl');
+    if(h&&tsel){  // つまみを動かす
+      e.preventDefault();e.stopPropagation();
+      drag={n:tsel.n,which:h.dataset.end,fixed:h.dataset.end==='e'?tsel.a:tsel.b,id:t.identifier};
+      $('selBar').hidden=true;return;
+    }
+    const pv=pvOf(e);if(!pv)return;
+    if(t.touchType==='stylus'){  // Apple Pencilはなぞるだけで選ぶ
+      e.preventDefault();
+      beginAt(pv,t,false).then(ok=>{if(ok&&drag)drag.anchorEnd=null});
+      return;
+    }
+    lp={x:t.clientX,y:t.clientY,pv,t:{clientX:t.clientX,clientY:t.clientY,identifier:t.identifier},
+      timer:setTimeout(async()=>{const l=lp;if(!l)return;l.fired=true;if(!(await beginAt(l.pv,l.t,true)))lp=null},420)};
+  },{passive:false});
+  pagesEl.addEventListener('touchmove',e=>{
+    const t=e.changedTouches[0];
+    if(drag&&t.identifier===drag.id){if(e.cancelable)e.preventDefault();moveTo(t);return}
+    if(lp&&!lp.fired&&Math.hypot(t.clientX-lp.x,t.clientY-lp.y)>10){clearTimeout(lp.timer);lp=null}
+  },{passive:false});
+  const end=e=>{
+    const t=e.changedTouches[0];
+    if(lp){clearTimeout(lp.timer);const fired=lp.fired;lp=null;
+      if(!fired&&tsel&&!drag){clearSel();suppressClickUntil=Date.now()+400}}  // 選択中に別の所をタップしたら解除
+    if(drag&&t.identifier===drag.id){drag=null;if(tsel){suppressClickUntil=Date.now()+400;showSelBar()}}
+  };
+  pagesEl.addEventListener('touchend',end);pagesEl.addEventListener('touchcancel',end);
+  stage.addEventListener('touchstart',e=>{if(e.touches.length>1&&lp){clearTimeout(lp.timer);lp=null}},{passive:true});
+}
 
 /* ===================== メモ ===================== */
 // ハイライト直後に「メモを追加しますか？」
@@ -971,7 +1147,7 @@ async function jumpToMark(p,m,opt={}){
 function anyFloatOpen(){return ['selBar','askMemo','annoCard','palette','fileMenu'].some(id=>!$(id).hidden)}
 function hideAllFloats(){$('palette').hidden=true;hideAsk();hideAnno();hideTip();hideFileMenu()}
 function placeFloats(){
-  if(!$('selBar').hidden&&selRange)showSelBar();
+  if(!$('selBar').hidden&&(selRange||tsel))showSelBar();
   if(!$('trPop').hidden)placeTr();
   placeAnno();
   if(askMark&&!$('askMemo').hidden)placeNear($('askMemo'),unionRect(markClientRects(askMark)),'below');
@@ -1732,7 +1908,8 @@ stage.addEventListener('wheel',e=>{
 },{passive:false});
 
 /* ===================== 端末に合わせた表示 ===================== */
-if(!N.translate){$('trBtn').hidden=true;$('trBtn').nextElementSibling.hidden=true;document.querySelector('[data-set="tr"]').hidden=true}
+if(!N.translate){$('trBtn').hidden=true;$('trBtn').nextElementSibling.hidden=true}
+if(!N.getTrSettings){document.querySelector('[data-set="tr"]').hidden=true;$('trSet').hidden=true}
 if(!N.toggleFullscreen)$('fsBtn').hidden=true;
 if(TOUCH)document.body.classList.add('touch');
 if(N.platform==='web'){

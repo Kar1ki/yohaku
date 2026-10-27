@@ -339,3 +339,12 @@ button{cursor:pointer;-webkit-user-select:none;user-select:none}
   .status{display:none}
   .home{padding:32px 20px}
 }
+
+/* iPad: 余白専用の文字選択 */
+.tselmode .page,.tselmode .textLayer,.tselmode .textLayer span{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+.tsel{position:absolute;inset:0;z-index:7;pointer-events:none}
+.tsel i{position:absolute;background:rgba(64,110,220,.28);border-radius:2px}
+.hdl{position:absolute;width:2px;margin-left:-1px;background:#2f6fdb;pointer-events:auto;touch-action:none}
+.hdl::before{content:'';position:absolute;left:-6px;width:14px;height:14px;border-radius:50%;background:#2f6fdb}
+.hdl.s::before{top:-13px}.hdl.e::before{bottom:-13px}
+.hdl::after{content:'';position:absolute;left:-20px;right:-20px;top:-26px;bottom:-26px}
