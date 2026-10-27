@@ -167,19 +167,20 @@ button{cursor:pointer;-webkit-user-select:none;user-select:none}
 
 /* リーダー */
 .viewbody{position:relative;flex:1;min-height:0;background:var(--desk)}
-#stage{position:absolute;inset:0;overflow:auto;touch-action:pan-x pan-y;overscroll-behavior:contain}
-#wrap{min-width:100%;min-height:100%;width:max-content;display:flex;align-items:center;justify-content:center;padding:var(--pad,14px) var(--pad,14px) 64px}
-#page{position:relative;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.25),0 8px 30px rgba(0,0,0,.22);flex:none;transform-origin:0 0}
-#page canvas{position:absolute;left:0;top:0;display:block;pointer-events:none}
-#pdfCanvas{z-index:1}#markCanvas{z-index:2}#inkCanvas{z-index:5}#liveCanvas{z-index:6}
-#pdfCanvas{filter:var(--pagefilter,none)}
-#memoLayer{position:absolute;inset:0;z-index:4;pointer-events:none}
+#stage{position:absolute;inset:0;overflow:auto;overflow-anchor:none;touch-action:pan-x pan-y;overscroll-behavior:contain}
+#pages{display:flex;flex-direction:column;align-items:center;gap:12px;padding:14px 14px 80px;min-width:100%;width:max-content;position:relative;transform-origin:0 0}
+#pages.paged{min-height:100%;justify-content:center;padding-bottom:64px}
+.page{position:relative;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.25),0 8px 30px rgba(0,0,0,.22);flex:none}
+.paged .page{display:none}.paged .page.cur{display:block}
+.page>canvas{position:absolute;left:0;top:0;width:100%;height:100%;display:block;pointer-events:none}
+.page>canvas.pc{z-index:1;filter:var(--pagefilter,none)}.page>canvas.marks{z-index:2}.page>canvas.ink{z-index:5}.page>canvas.live{z-index:6}
+.mlayer{position:absolute;inset:0;z-index:4;pointer-events:none}
 .badge{position:absolute;width:15px;height:15px;margin:-10px 0 0 -6px;border-radius:50%;background:var(--accent);color:var(--accent-fg);display:grid;place-items:center;pointer-events:auto;border:0;padding:0;box-shadow:0 1px 4px rgba(0,0,0,.35);transition:transform .15s var(--ease)}
 .badge:hover{transform:scale(1.15)}
 .badge svg{width:9px;height:9px}
 .flash{position:absolute;border-radius:3px;pointer-events:none;box-shadow:0 0 0 2px var(--accent);animation:flash 1.4s var(--ease) forwards}
 @keyframes flash{0%{opacity:0;transform:scale(1.06)}15%{opacity:1;transform:none}70%{opacity:1}100%{opacity:0}}
-.drawtool #page{cursor:crosshair}
+.drawtool .page{cursor:crosshair}
 .overmark .textLayer span{cursor:pointer}
 .msg{position:absolute;left:0;right:0;top:42%;text-align:center;color:var(--muted);padding:0 24px}
 
@@ -189,7 +190,7 @@ button{cursor:pointer;-webkit-user-select:none;user-select:none}
 .textLayer span.markedContent{top:0;height:0}
 .textLayer ::selection{background:rgba(64,110,220,.3)}
 .textLayer .endOfContent{display:block;position:absolute;inset:100% 0 0;z-index:-1;cursor:default;user-select:none}
-.textLayer.selecting .endOfContent{top:0}
+.textLayer .endOfContent.active{top:0}
 
 /* 道具の帯(下中央に浮かぶ) */
 .toolpill{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);z-index:8;display:flex;align-items:center;gap:2px;padding:4px;background:var(--raise);border:1px solid var(--border);border-radius:10px;box-shadow:var(--shadow);transition:transform .2s var(--ease),opacity .2s}

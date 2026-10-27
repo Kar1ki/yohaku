@@ -25,6 +25,8 @@
     <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8z M14 3v5h5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></symbol>
     <symbol id="i-prev" viewBox="0 0 24 24"><path d="M14.5 6.5L9 12l5.5 5.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-next" viewBox="0 0 24 24"><path d="M9.5 6.5L15 12l-5.5 5.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-vscroll" viewBox="0 0 24 24"><rect x="6.5" y="2.5" width="11" height="8" rx="1.3" fill="none" stroke="currentColor" stroke-width="1.7"/><rect x="6.5" y="13.5" width="11" height="8" rx="1.3" fill="none" stroke="currentColor" stroke-width="1.7"/></symbol>
+    <symbol id="i-hpage" viewBox="0 0 24 24"><rect x="7" y="4" width="10" height="16" rx="1.3" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M4 10l-2 2 2 2M20 10l2 2-2 2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-fitpage" viewBox="0 0 24 24"><rect x="6.5" y="3.5" width="11" height="17" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.7"/></symbol>
     <symbol id="i-fitwidth" viewBox="0 0 24 24"><path d="M3.5 12h17M7 8.5L3.5 12 7 15.5M17 8.5l3.5 3.5-3.5 3.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-bm" viewBox="0 0 24 24"><path d="M6.5 3.5h11v17l-5.5-4-5.5 4z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></symbol>
@@ -89,6 +91,7 @@
       </div>
       <div class="crumb" id="crumb"><b>ホーム</b></div>
       <div class="actgrp doconly">
+        <button class="ib" id="viewBtn" title="ページの送り方"><svg><use id="viewUse" href="#i-vscroll"/></svg></button>
         <button class="ib" id="fitBtn" title="表示サイズ"><svg><use id="fitUse" href="#i-fitpage"/></svg></button>
         <button class="ib" id="bmBtn" aria-pressed="false" title="このページをしおりに追加 (B)"><svg><use href="#i-bm"/></svg></button>
         <button class="ib" id="fsBtn" title="全画面 (F11)"><svg><use href="#i-full"/></svg></button>
@@ -117,14 +120,7 @@
 
     <!-- リーダー -->
     <section class="viewbody" id="reader" hidden>
-      <div id="stage"><div id="wrap"><div id="page">
-        <canvas id="pdfCanvas"></canvas>
-        <canvas id="markCanvas"></canvas>
-        <div class="textLayer" id="textLayer"></div>
-        <div id="memoLayer"></div>
-        <canvas id="inkCanvas"></canvas>
-        <canvas id="liveCanvas"></canvas>
-      </div></div><div class="msg" id="msg" hidden></div></div>
+      <div id="stage"><div id="pages"></div><div class="msg" id="msg" hidden></div></div>
 
       <div class="toolpill" id="toolBar" role="toolbar" aria-label="ツール">
         <button class="ib" data-tool="select" aria-pressed="true" title="選択・読む (V)"><svg><use href="#i-hand"/></svg></button>
@@ -245,6 +241,6 @@
 <script src="drive-core.js"></script>
 <script src="platform-web.js"></script>
 <script src="app.js"></script>
-<script>if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('sw.js').catch(()=>{});</script>
+<script>if('serviceWorker' in navigator&&location.protocol==='https:'){const had=!!navigator.serviceWorker.controller;navigator.serviceWorker.addEventListener('controllerchange',()=>{if(had&&!window.__rl){window.__rl=1;location.reload()}});navigator.serviceWorker.register('sw.js').catch(()=>{})}</script>
 </body>
 </html>

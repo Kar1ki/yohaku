@@ -9,9 +9,7 @@ const N=window.yohakuNative;               // Windows版はメイン処理、iPa
 const CMAP=N.cmapUrl||'cmaps/', FONTS=N.fontsUrl||'standard_fonts/';   // 日本語PDF用の文字データ
 const TOUCH=matchMedia('(hover: none) and (pointer: coarse)').matches;
 const narrow=()=>innerWidth<900;
-const app=$('app'), stage=$('stage'), wrap=$('wrap'), pageEl=$('page'), pdfCanvas=$('pdfCanvas'), markCanvas=$('markCanvas'),
-      ink=$('inkCanvas'), live=$('liveCanvas'), textLayer=$('textLayer'), memoLayer=$('memoLayer'), reader=$('reader'), home=$('home');
-try{live.getContext('2d',{desynchronized:true})}catch(e){}
+const app=$('app'), stage=$('stage'), reader=$('reader'), home=$('home');
 
 const PEN_COLORS=['#1b2230','#c0392b','#1f5fbf','#1e7a4a'];
 const HL_COLORS=['#f5d547','#86dc96','#8cc8f5','#f6a3c6'];
@@ -22,7 +20,7 @@ const WIDTHS={pen:[1.2,2.2,3.6],hl:[8,13,20]};
 function lsGet(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch(e){return d}}
 function lsSet(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}
 const prefs=Object.assign({fit:'page',penColor:0,hlColor:0,penW:1,hlW:1,markCi:0,finger:false,
-  left:true,right:true,leftW:260,rightW:320,ltab:'files',rtab:'memos',askMemo:true,wheelTurn:true},lsGet('yohaku:prefs',{}));
+  left:true,right:true,leftW:260,rightW:320,ltab:'files',rtab:'memos',askMemo:true,wheelTurn:true,view:N.platform==='web'?'paged':'scroll'},lsGet('yohaku:prefs',{}));
 prefs.look=Object.assign({mode:'dark',dark:'graphite',light:'paper',accent:'violet',page:'normal',size:'m',motion:true},prefs.look||{});
 const savePrefs=()=>lsSet('yohaku:prefs',prefs);
 
@@ -184,11 +182,20 @@ $('sampleBtn').onclick=async()=>{
 window.addEventListener('dragover',e=>e.preventDefault());
 window.addEventListener('drop',e=>{e.preventDefault();const fs=[...(e.dataTransfer?.files||[])];if(fs.length)addFiles(fs)});
 
-/* ===================== リーダー ===================== */
+/* ===================== リーダー(複数ページの表示) =====================
+   連続スクロール: 全ページを縦に並べ、見えているページ(と前後1ページ)だけを描く。
+   1ページずつ: 今のページだけを表示し、端までスクロールするとめくる。
+   ページごとに PV[n] = {el, canvas, text(文字), marks/ink/live(書き込み), memo(印)} を持つ。 */
+const pagesEl=$('pages');
+const GAP=12;
+let PV=[],pageBase=[];
+const scrollMode=()=>prefs.view==='scroll';
+S.rendered=new Set();
 function closeDoc(){
   hideAllFloats();hideTr();clearBmp();
   if(S.pdf){try{S.pdf.destroy()}catch(e){}S.pdf=null}
   S.id=null;S.meta=null;S.notes=null;S.outline=null;
+  pagesEl.innerHTML='';PV=[];pageBase=[];S.rendered.clear();
 }
 async function openBook(id){
   const meta=await DB.get('meta',id),blob=await DB.get('blobs',id);
@@ -202,7 +209,7 @@ async function openBook(id){
   reader.style.opacity='0';requestAnimationFrame(()=>requestAnimationFrame(()=>{reader.style.opacity=''}));
   $('crumb').innerHTML='';const b=document.createElement('b');b.textContent=baseName(meta.name);$('crumb').append('本棚 / ',b);
   $('pageCount').textContent='–';
-  clearCanvases();showMsg('読み込み中…');
+  showMsg('読み込み中…');
   try{
     S.pdf=await pdfjsLib.getDocument({data:new Uint8Array(blob.data),cMapUrl:CMAP,cMapPacked:true,standardFontDataUrl:FONTS,useSystemFonts:true}).promise;
   }catch(e){console.error(e);showMsg(e&&e.name==='PasswordException'?'パスワード付きのPDFは開けません。':'このPDFを開けませんでした。ファイルが壊れている可能性があります。');return}
@@ -210,14 +217,42 @@ async function openBook(id){
   hideMsg();
   const n=S.pdf.numPages;$('pageCount').textContent=n;
   meta.pages=n;meta.opened=Date.now();saveMeta();
+  // ページの枠を先に並べる(大きさは1ページ目と同じと仮定し、あとで正しい大きさに直す)
+  const v1=(await S.pdf.getPage(1)).getViewport({scale:1});
+  pageBase=[null];for(let i=1;i<=n;i++)pageBase.push({w:v1.width,h:v1.height});
+  buildPages();
+  viewIcon();
+  const start=Math.min(meta.page||1,n);
+  S.scale=S.zoom=fitScale(start);layout();
   loadMetas().then(()=>{if(prefs.ltab==='files')renderLeft()});
   renderLeft();renderRight();
-  await go(Math.min(meta.page||1,n));
+  await go(start,{instant:true});
+  loadPageSizes(id);
   if(!meta.thumb)makeThumb();
+}
+function buildPages(){
+  pagesEl.innerHTML='';PV=[null];S.rendered.clear();
+  pagesEl.classList.toggle('paged',!scrollMode());
+  const frag=document.createDocumentFragment();
+  for(let i=1;i<pageBase.length;i++){
+    const el=document.createElement('div');el.className='page';el.dataset.n=i;
+    frag.appendChild(el);PV.push({n:i,el});
+  }
+  pagesEl.appendChild(frag);
+}
+// 実際のページの大きさを少しずつ読み込み、違っていたら並べ直す
+async function loadPageSizes(id){
+  let ch=false;
+  for(let i=2;i<pageBase.length;i++){
+    if(S.id!==id||!S.pdf)return;
+    try{const v=(await S.pdf.getPage(i)).getViewport({scale:1});
+      if(Math.abs(v.width-pageBase[i].w)>.5||Math.abs(v.height-pageBase[i].h)>.5){pageBase[i]={w:v.width,h:v.height};ch=true}}catch(e){}
+    if(ch&&(i%25===0||i===pageBase.length-1)){ch=false;relayoutKeep()}
+    if(i%10===0)await new Promise(r=>setTimeout(r,0));
+  }
 }
 function showMsg(t){$('msg').textContent=t;$('msg').hidden=false}
 function hideMsg(){$('msg').hidden=true}
-function clearCanvases(){for(const c of [pdfCanvas,markCanvas,ink,live]){c.width=0;c.height=0}textLayer.innerHTML='';memoLayer.innerHTML='';pageEl.style.width='0';pageEl.style.height='0'}
 async function makeThumb(){
   try{const p=await S.pdf.getPage(1);const v0=p.getViewport({scale:1});const vp=p.getViewport({scale:300/v0.width});
     const c=document.createElement('canvas');c.width=vp.width;c.height=vp.height;
@@ -227,33 +262,143 @@ async function makeThumb(){
 let metaT=0;function saveMeta(){clearTimeout(metaT);const m=S.meta;if(!m)return;metaT=setTimeout(()=>DB.put('meta',m).catch(()=>{}),300)}
 let notesT=0;function saveNotes(){clearTimeout(notesT);const n=S.notes;if(!n)return;syncDirty(S.meta,1500);notesT=setTimeout(()=>DB.put('notes',n).catch(()=>toast('保存できませんでした（PCの空き容量を確認してください）')),250)}
 
-async function go(n,opt){
-  if(!S.pdf)return;
-  n=Math.max(1,Math.min(S.pdf.numPages,(n|0)||1));
-  const changed=n!==S.page;S.turnDir=changed&&S.page>0?Math.sign(n-S.page):0;S.page=n;
-  if(changed){hideTr();hideAllFloats()}
-  $('pageInput').value=n;
-  $('prevBtn').disabled=n<=1;$('nextBtn').disabled=n>=S.pdf.numPages;
-  if(S.meta.page!==n){S.meta.page=n;S.meta.pu=Date.now();syncDirty(S.meta,8000)}saveMeta();updateBmBtn();updateStatus();markTocCurrent();
-  if(changed){stage.scrollTop=0;stage.scrollLeft=0}
-  await render();
-  if(opt&&opt.bottom)stage.scrollTop=stage.scrollHeight;
+/* ---------- 大きさ ---------- */
+function fitScale(n){
+  const b=pageBase[n]||pageBase[1];if(!b)return 1;
+  const aw=stage.clientWidth-28,ah=stage.clientHeight-28;
+  if(S.fit==='page')return Math.max(.1,Math.min(aw/b.w,ah/b.h));
+  if(S.fit==='width')return Math.max(.1,Math.min(aw,1100)/b.w);
+  return S.zoom;
+}
+function layout(){
+  for(let i=1;i<PV.length;i++){const b=pageBase[i];PV[i].el.style.width=Math.floor(b.w*S.scale)+'px';PV[i].el.style.height=Math.floor(b.h*S.scale)+'px'}
 }
 function fitIcon(){
   $('fitUse').setAttribute('href',S.fit==='width'?'#i-fitwidth':'#i-fitpage');
   $('fitBtn').title=S.fit==='width'?'幅に合わせて表示中（クリックでページ全体）':'ページ全体を表示中（クリックで幅に合わせる）';
 }
+// 画面上のある点が、どのページのどの位置かを覚えておき、大きさを変えたあとも同じ場所に戻す
+function pageAtClientY(y){
+  let best=PV[S.page]||PV[1];
+  for(let i=1;i<PV.length;i++){const el=PV[i].el;if(el.offsetParent===null)continue;const r=el.getBoundingClientRect();if(r.bottom>=y){best=PV[i];break}}
+  return best;
+}
+function anchorAt(cx,cy){
+  const sr=stage.getBoundingClientRect();
+  if(cx==null){cx=sr.left+sr.width/2;cy=sr.top+(scrollMode()?8:sr.height/2)}
+  const pv=scrollMode()?pageAtClientY(cy):PV[S.page];if(!pv)return null;
+  const r=pv.el.getBoundingClientRect();
+  return {n:pv.n,fx:(cx-r.left)/r.width,fy:(cy-r.top)/r.height,cx:cx-sr.left,cy:cy-sr.top};
+}
+function restoreAnchor(a){
+  if(!a||!PV[a.n])return;const el=PV[a.n].el;
+  stage.scrollLeft=el.offsetLeft+a.fx*el.offsetWidth-a.cx;
+  stage.scrollTop=el.offsetTop+a.fy*el.offsetHeight-a.cy;
+}
+function invalidateAll(){for(const n of S.rendered){const pv=PV[n];if(pv){pv.key=null;pv.textKey=null}}}
+function setScale(sc,anchor){
+  if(!S.pdf)return;
+  const a=anchor===undefined?anchorAt():anchor;
+  S.scale=sc;if(S.fit!=='custom')S.zoom=sc;
+  layout();restoreAnchor(a);invalidateAll();fitIcon();updateStatus();
+  if(scrollMode())scheduleVisible();else renderPage(S.page);
+  placeFloats();
+}
+function refit(){if(isDoc()){fitIcon();setScale(fitScale(S.page))}}
+// 「スクロール」と「1ページずつ」を切り替える
+function viewIcon(){
+  const sc=scrollMode();$('viewUse').setAttribute('href',sc?'#i-vscroll':'#i-hpage');
+  $('viewBtn').title=sc?'縦スクロールで表示中（クリックで1ページずつ横にめくる）  S':'1ページずつ表示中（クリックで縦スクロール）  S';
+}
+function setView(v){
+  if(prefs.view===v)return;prefs.view=v;savePrefs();viewIcon();
+  if(isDoc()){switchView();toast(v==='scroll'?'縦スクロール表示':'1ページずつ（← → でめくる）')}
+}
+$('viewBtn').onclick=()=>setView(scrollMode()?'paged':'scroll');
+function switchView(){
+  const n=S.page;hideAllFloats();clearSel();
+  for(const k of [...S.rendered])unrenderPage(k);
+  pagesEl.classList.toggle('paged',!scrollMode());
+  PV.forEach(pv=>pv&&pv.el.classList.remove('cur'));
+  S.page=0;stage.scrollTop=0;
+  if(S.fit!=='custom'){S.scale=S.zoom=fitScale(n)}
+  layout();go(n,{instant:true});
+}
+function relayoutKeep(){const a=anchorAt();layout();restoreAnchor(a);scheduleVisible()}
 
-/* ページ画像のキャッシュ(前後のページを先に描いておき、めくりを一瞬にする) */
+/* ---------- 見えているページを描く ---------- */
+let visRaf=0;
+function scheduleVisible(){if(!visRaf)visRaf=requestAnimationFrame(updateVisible)}
+function visibleRange(){
+  if(!scrollMode())return [S.page,S.page];
+  const top=stage.scrollTop,bot=top+stage.clientHeight;
+  let lo=1,hi=PV.length-1;
+  while(lo<hi){const mid=(lo+hi)>>1,el=PV[mid].el;if(el.offsetTop+el.offsetHeight<top)lo=mid+1;else hi=mid}
+  let last=lo;while(last<PV.length-1&&PV[last+1].el.offsetTop<bot)last++;
+  return [lo,last];
+}
+function updateVisible(){
+  visRaf=0;if(!S.pdf||!PV.length)return;
+  const [a,b]=visibleRange();
+  if(scrollMode()){
+    const y=stage.scrollTop+stage.clientHeight*.35;let n=a;
+    for(let i=a;i<=b;i++)if(PV[i].el.offsetTop<=y)n=i;
+    setCurrent(n);
+  }
+  const lo=Math.max(1,a-1),hi=Math.min(PV.length-1,b+1);
+  for(let i=lo;i<=hi;i++)renderPage(i);
+  for(const n of [...S.rendered])if(n<a-3||n>b+3)unrenderPage(n);
+}
+stage.addEventListener('scroll',()=>{if(scrollMode())scheduleVisible()},{passive:true});
+function setCurrent(n){
+  if(n===S.page)return;
+  S.page=n;
+  $('pageInput').value=n;
+  $('prevBtn').disabled=n<=1;$('nextBtn').disabled=n>=S.pdf.numPages;
+  if(S.meta.page!==n){S.meta.page=n;S.meta.pu=Date.now();syncDirty(S.meta,8000)}
+  saveMeta();updateBmBtn();updateStatus();markTocCurrent();
+}
+async function go(n,opt={}){
+  if(!S.pdf)return;
+  n=Math.max(1,Math.min(S.pdf.numPages,(n|0)||1));
+  if(scrollMode()){
+    const el=PV[n].el,target=Math.max(0,el.offsetTop-GAP);
+    const smooth=!opt.instant&&motionOK()&&Math.abs(target-stage.scrollTop)<stage.clientHeight*2.5;
+    stage.scrollTo({top:target,behavior:smooth?'smooth':'auto'});
+    setCurrent(n);scheduleVisible();
+    if(!smooth)await renderPage(n);
+    return;
+  }
+  // 1ページずつ
+  const prev=S.page,changed=n!==prev;
+  if(changed){hideTr();hideAllFloats()}
+  if(PV[prev])PV[prev].el.classList.remove('cur');
+  PV[n].el.classList.add('cur');
+  setCurrent(n);
+  if(S.fit!=='custom'){const sc=fitScale(n);if(Math.abs(sc-S.scale)>1e-4){S.scale=S.zoom=sc;layout();invalidateAll()}}
+  fitIcon();
+  if(changed){stage.scrollTop=0;stage.scrollLeft=0}
+  await renderPage(n);
+  if(changed&&prev>0)animateTurn(PV[n].el,Math.sign(n-prev));
+  if(opt.bottom)stage.scrollTop=stage.scrollHeight;
+  for(const k of [...S.rendered])if(k!==n)unrenderPage(k);
+  prefetch(n);
+}
+// 1ページずつのとき、前後のページを先に描いておく
+let prefT=0;
+function prefetch(n){
+  clearTimeout(prefT);const sc=S.scale;
+  prefT=setTimeout(async()=>{for(const d of [1,-1,2]){if(!S.pdf||S.page!==n||S.scale!==sc)return;const m=n+d;if(m<1||m>S.pdf.numPages)continue;try{await getBitmap(m,S.fit==='custom'?sc:fitScale(m))}catch(e){}}},120);
+}
+const reduceMotion=matchMedia('(prefers-reduced-motion: reduce)');
+const motionOK=()=>prefs.look.motion&&!reduceMotion.matches;
+function animateTurn(el,d){
+  if(!motionOK()||!d)return;
+  el.animate([{transform:'translateX('+(d*28)+'px)',opacity:.3},{transform:'none',opacity:1}],{duration:180,easing:'cubic-bezier(.2,.8,.2,1)'});
+}
+/* ページ画像のキャッシュ */
 const bmp=new Map();
 function clearBmp(){for(const v of bmp.values())v.then(e=>{e.c.width=0;e.c.height=0}).catch(()=>{});bmp.clear()}
-function scaleFor(page){
-  const base=page.getViewport({scale:1});
-  const pad=14,aw=stage.clientWidth-pad*2,ah=stage.clientHeight-pad*2;
-  if(S.fit==='page')return Math.max(.1,Math.min(aw/base.width,ah/base.height));
-  if(S.fit==='width')return Math.max(.1,Math.min(aw,1100)/base.width);
-  return S.zoom;
-}
 function getBitmap(n,scale){
   const key=n+'|'+scale.toFixed(4);
   if(bmp.has(key)){const v=bmp.get(key);bmp.delete(key);bmp.set(key,v);return v}
@@ -268,64 +413,61 @@ function getBitmap(n,scale){
     return {c,W,H};
   })();
   bmp.set(key,pr);pr.catch(()=>bmp.delete(key));
-  while(bmp.size>6){const k=bmp.keys().next().value;const v=bmp.get(k);bmp.delete(k);v.then(e=>{e.c.width=0;e.c.height=0}).catch(()=>{})}
+  while(bmp.size>8){const k=bmp.keys().next().value;const v=bmp.get(k);bmp.delete(k);v.then(e=>{e.c.width=0;e.c.height=0}).catch(()=>{})}
   return pr;
 }
-let prefT=0;
-function prefetch(id){
-  clearTimeout(prefT);
-  prefT=setTimeout(async()=>{
-    for(const d of [1,-1,2]){
-      if(id!==S.renderId||!S.pdf)return;
-      const m=S.page+d;if(m<1||m>S.pdf.numPages)continue;
-      try{const pg=await S.pdf.getPage(m);if(id!==S.renderId)return;await getBitmap(m,scaleFor(pg))}catch(e){}
-    }
-  },120);
-}
-const reduceMotion=matchMedia('(prefers-reduced-motion: reduce)');
-const motionOK=()=>prefs.look.motion&&!reduceMotion.matches;
-function animateTurn(d){
-  if(!motionOK()||!d)return;
-  pageEl.animate([{transform:'translateX('+(d*28)+'px)',opacity:.3},{transform:'none',opacity:1}],{duration:180,easing:'cubic-bezier(.2,.8,.2,1)'});
-}
-async function render(focal){
-  if(!S.pdf)return;
-  const id=++S.renderId,n=S.page;
-  const page=await S.pdf.getPage(n);if(id!==S.renderId)return;
-  S.scale=scaleFor(page);
-  if(S.fit!=='custom')S.zoom=S.scale;
-  fitIcon();
-  const vp=page.getViewport({scale:S.scale});
+async function renderPage(n){
+  const pv=PV[n];if(!pv||!S.pdf)return;
+  const sc=S.scale,key=sc.toFixed(4);
+  if(pv.key===key||pv.busy===key)return;
+  pv.busy=key;S.rendered.add(n);
   let bm;
-  try{bm=await getBitmap(n,S.scale)}catch(e){if(id===S.renderId)console.error(e);return}
-  if(id!==S.renderId)return;
-  const {W,H}=bm;
-  const dpr2=Math.max(1,Math.min(window.devicePixelRatio||1,2,Math.sqrt(8e6/(W*H))));
-  S.cssW=W;S.cssH=H;
-  pageEl.style.width=W+'px';pageEl.style.height=H+'px';
-  pdfCanvas.width=bm.c.width;pdfCanvas.height=bm.c.height;pdfCanvas.style.width=W+'px';pdfCanvas.style.height=H+'px';
-  pdfCanvas.getContext('2d',{alpha:false}).drawImage(bm.c,0,0);
-  for(const c of [markCanvas,ink,live]){c.width=Math.floor(W*dpr2);c.height=Math.floor(H*dpr2);c.style.width=W+'px';c.style.height=H+'px';c.getContext('2d').setTransform(dpr2,0,0,dpr2,0,0)}
-  drawMarks();drawInk();
-  if(focal){stage.scrollLeft=pageEl.offsetLeft+focal.nx*W-focal.cx;stage.scrollTop=pageEl.offsetTop+focal.ny*H-focal.cy}
-  if(S.turnDir){animateTurn(S.turnDir);S.turnDir=0}
-  updateStatus();
-  prefetch(id);
-  if(S.textTask){try{S.textTask.cancel()}catch(e){}}
-  textLayer.innerHTML='';textLayer.style.setProperty('--scale-factor',S.scale);
-  try{
-    S.textTask=pdfjsLib.renderTextLayer({textContentSource:page.streamTextContent(),container:textLayer,viewport:vp});
-    await S.textTask.promise;
-    if(id!==S.renderId)return;
-    const end=document.createElement('div');end.className='endOfContent';textLayer.appendChild(end);
-  }catch(e){}
+  try{bm=await getBitmap(n,sc)}catch(e){pv.busy=null;return}
+  if(!S.pdf||PV[n]!==pv||S.scale!==sc||!S.rendered.has(n)){pv.busy=null;return}
+  if(!pv.canvas){pv.canvas=document.createElement('canvas');pv.canvas.className='pc';pv.el.prepend(pv.canvas)}
+  pv.canvas.width=bm.c.width;pv.canvas.height=bm.c.height;
+  pv.canvas.getContext('2d',{alpha:false}).drawImage(bm.c,0,0);
+  pv.W=bm.W;pv.H=bm.H;pv.key=key;pv.busy=null;
+  drawMarksFor(n);drawInkFor(n);
+  renderText(n,sc);
 }
-// 画面やパネルの大きさが変わったら描き直す
+function unrenderPage(n){
+  const pv=PV[n];if(!pv)return;
+  const s=getSelection();if(pv.text&&s&&s.rangeCount&&!s.isCollapsed&&pv.el.contains(s.anchorNode))return;
+  if(activeId!==null&&S.drawN===n)return;
+  for(const k of ['canvas','marks','ink','live']){if(pv[k]){pv[k].width=0;pv[k].height=0;pv[k].remove();pv[k]=null}}
+  if(pv.text){if(pv.textTask)try{pv.textTask.cancel()}catch(e){}pv.text.remove();pv.text=null;pv.end=null}
+  if(pv.memo){pv.memo.remove();pv.memo=null}
+  pv.key=pv.textKey=pv.busy=null;S.rendered.delete(n);
+}
+async function renderText(n,sc){
+  const pv=PV[n];if(!pv||pv.textKey===sc.toFixed(4))return;
+  const page=await S.pdf.getPage(n);if(!S.pdf||S.scale!==sc||PV[n]!==pv||!S.rendered.has(n))return;
+  const vp=page.getViewport({scale:sc});
+  if(!pv.text){
+    pv.text=document.createElement('div');pv.text.className='textLayer';pv.el.appendChild(pv.text);
+    pv.text.addEventListener('mousedown',()=>{if(pv.end)pv.end.classList.add('active')});
+  }
+  if(pv.textTask){try{pv.textTask.cancel()}catch(e){}}
+  pv.text.innerHTML='';pv.text.style.setProperty('--scale-factor',sc);pv.textKey=sc.toFixed(4);
+  try{pv.textTask=pdfjsLib.renderTextLayer({textContentSource:page.streamTextContent(),container:pv.text,viewport:vp});await pv.textTask.promise}catch(e){return}
+  const end=document.createElement('div');end.className='endOfContent';pv.text.appendChild(end);pv.end=end;
+}
+// 書き込み用の透明な重ね板(必要になったときだけ作る)
+function layerOf(pv,name){
+  let c=pv[name];const W=pv.W,H=pv.H;
+  const d=Math.max(1,Math.min(window.devicePixelRatio||1,2,Math.sqrt(8e6/(W*H)))),k=W+'x'+H+'@'+d;
+  if(!c){c=document.createElement('canvas');c.className='ly '+name;if(name==='live')try{c.getContext('2d',{desynchronized:true})}catch(e){}pv.el.appendChild(c);pv[name]=c}
+  if(c._k!==k){c.width=Math.floor(W*d);c.height=Math.floor(H*d);c._k=k;c.getContext('2d').setTransform(d,0,0,d,0,0)}
+  return c;
+}
+function memoOf(pv){if(!pv.memo){pv.memo=document.createElement('div');pv.memo.className='mlayer';pv.el.appendChild(pv.memo)}return pv.memo}
+// 画面やパネルの大きさが変わったら合わせる
 let roT=0,lastSize='';
 new ResizeObserver(()=>{
   const sz=stage.clientWidth+'x'+stage.clientHeight;if(sz===lastSize)return;lastSize=sz;
   if(!isDoc())return;
-  clearTimeout(roT);roT=setTimeout(()=>{if(S.fit==='custom')S.fit=prefs.fit;render();placeFloats()},140);
+  clearTimeout(roT);roT=setTimeout(()=>{if(S.fit==='custom'){scheduleVisible();placeFloats()}else setScale(fitScale(S.page))},140);
 }).observe(stage);
 
 /* ---------- 手書き ---------- */
@@ -355,17 +497,34 @@ function strokePath(ctx,s,W,H){
   }
   ctx.restore();
 }
-function drawInk(){const c=ink.getContext('2d');c.clearRect(0,0,S.cssW,S.cssH);for(const s of S.notes.strokes[S.page]||[])strokePath(c,s,S.cssW,S.cssH)}
+function drawInkFor(n){
+  const pv=PV[n];if(!pv||!pv.W)return;
+  const st=S.notes.strokes[n]||[];if(!st.length&&!pv.ink)return;
+  const c=layerOf(pv,'ink').getContext('2d');c.clearRect(0,0,pv.W,pv.H);
+  for(const s of st)strokePath(c,s,pv.W,pv.H);
+}
 
 /* ---------- ハイライト・下線とメモの印 ---------- */
-function drawMarks(){
-  const c=markCanvas.getContext('2d'),W=S.cssW,H=S.cssH;c.clearRect(0,0,W,H);
-  memoLayer.querySelectorAll('.badge').forEach(b=>b.remove());
-  for(const m of S.notes.marks[S.page]||[]){
+// 行どうしが重なる部分は境目で分け、色が二重に濃くならないようにする
+function lineBoxes(m,W,H){
+  const rs=m.r.map(([x,y,w,h])=>({x:x*W,y:y*H,w:w*W,h:h*H})).sort((a,b)=>a.y-b.y);
+  for(let i=0;i<rs.length-1;i++){
+    const a=rs[i],b=rs[i+1],ab=a.y+a.h;
+    if(ab>b.y&&b.y>a.y){const mid=(ab+b.y)/2,bb=b.y+b.h;a.h=mid-a.y;b.y=mid;b.h=bb-mid}
+  }
+  return rs;
+}
+function drawMarksFor(n){
+  const pv=PV[n];if(!pv||!pv.W)return;
+  const marks=S.notes.marks[n]||[];
+  if(pv.memo)pv.memo.querySelectorAll('.badge').forEach(b=>b.remove());
+  if(!marks.length&&!pv.marks)return;
+  const c=layerOf(pv,'marks').getContext('2d'),W=pv.W,H=pv.H;c.clearRect(0,0,W,H);
+  for(const m of marks){
     const col=MARKS[m.ci]||MARKS[0];
-    for(const [x,y,w,h] of m.r){
-      if(m.t==='hl'){c.save();c.globalAlpha=.4;c.globalCompositeOperation='multiply';c.fillStyle=col.hl;c.fillRect(x*W,y*H,w*W,h*H);c.restore()}
-      else{const t=Math.max(1.5,h*H*.09);c.fillStyle=col.ul;c.fillRect(x*W,(y+h)*H-t*.6,w*W,t)}
+    for(const r of lineBoxes(m,W,H)){
+      if(m.t==='hl'){c.save();c.globalAlpha=.4;c.globalCompositeOperation='multiply';c.fillStyle=col.hl;c.fillRect(r.x,r.y,r.w,r.h);c.restore()}
+      else{const t=Math.max(1.5,r.h*.09);c.fillStyle=col.ul;c.fillRect(r.x,r.y+r.h-t*.6,r.w,t)}
     }
     if(m.memo){
       const [x,y,w]=m.r[m.r.length-1];
@@ -375,21 +534,24 @@ function drawMarks(){
       b.onclick=e=>{e.stopPropagation();openAnno(m)};
       b.onmouseenter=()=>showTip(m,b.getBoundingClientRect().right+6,b.getBoundingClientRect().top);
       b.onmouseleave=hideTip;
-      memoLayer.appendChild(b);
+      memoOf(pv).appendChild(b);
     }
   }
 }
+function redrawAll(){for(const n of S.rendered){drawMarksFor(n);drawInkFor(n)}}
+function pageOfMark(m){if(!S.notes)return 0;for(const [p,arr] of Object.entries(S.notes.marks))if(arr.includes(m))return +p;return 0}
 function markClientRects(m){
-  const pr=pageEl.getBoundingClientRect();
+  const pv=PV[pageOfMark(m)];if(!pv)return[{left:0,top:0,right:0,bottom:0}];
+  const pr=pv.el.getBoundingClientRect();
   return m.r.map(([x,y,w,h])=>({left:pr.left+x*pr.width,top:pr.top+y*pr.height,right:pr.left+(x+w)*pr.width,bottom:pr.top+(y+h)*pr.height}));
 }
 function unionRect(rs){return{left:Math.min(...rs.map(r=>r.left)),right:Math.max(...rs.map(r=>r.right)),top:Math.min(...rs.map(r=>r.top)),bottom:Math.max(...rs.map(r=>r.bottom))}}
 function flashMark(m){
-  const W=S.cssW,H=S.cssH;
+  const pv=PV[pageOfMark(m)];if(!pv||!pv.W)return;const W=pv.W,H=pv.H;
   for(const [x,y,w,h] of m.r){
     const d=document.createElement('div');d.className='flash';
     d.style.left=(x*W-3)+'px';d.style.top=(y*H-2)+'px';d.style.width=(w*W+6)+'px';d.style.height=(h*H+4)+'px';
-    memoLayer.appendChild(d);setTimeout(()=>d.remove(),1500);
+    memoOf(pv).appendChild(d);setTimeout(()=>d.remove(),1500);
   }
 }
 
@@ -397,50 +559,57 @@ function flashMark(m){
 const isDrawTool=()=>S.tool!=='select';
 const canDrawWith=type=>type==='pen'||type==='mouse'||(type==='touch'&&S.finger);
 let penHover=false,penErase=false;
-function updateTouchAction(){pageEl.style.touchAction=(isDrawTool()&&(penHover||S.finger))||penErase?'none':''}
-pageEl.addEventListener('touchstart',e=>{
+function updateTouchAction(){pagesEl.style.touchAction=(isDrawTool()&&(penHover||S.finger))||penErase?'none':''}
+pagesEl.addEventListener('touchstart',e=>{
   if(!isDrawTool()||e.touches.length>1)return;
   const t=e.changedTouches[0];if(t.touchType==='stylus'||S.finger)e.preventDefault();
 },{passive:false});
-pageEl.addEventListener('touchmove',e=>{
+pagesEl.addEventListener('touchmove',e=>{
   if(!isDrawTool()||e.touches.length>1)return;
   const t=e.changedTouches[0];if(t.touchType==='stylus'||(S.finger&&activeId!==null))e.preventDefault();
 },{passive:false});
 document.addEventListener('gesturestart',e=>e.preventDefault());
-pageEl.addEventListener('pointerover',e=>{if(e.pointerType==='pen'){penHover=true;penErase=!!(e.buttons&32);updateTouchAction()}});
-pageEl.addEventListener('pointerout',e=>{if(e.pointerType==='pen'&&activeId===null){penHover=false;penErase=false;updateTouchAction()}});
+pagesEl.addEventListener('pointerover',e=>{if(e.pointerType==='pen'){penHover=true;penErase=!!(e.buttons&32);updateTouchAction()}});
+pagesEl.addEventListener('pointerout',e=>{if(e.pointerType==='pen'&&activeId===null){penHover=false;penErase=false;updateTouchAction()}});
 let cur=null,activeId=null,rafId=0,pinch=null,suppressClickUntil=0;
-function pt(e){const r=pageEl.getBoundingClientRect();return[(e.clientX-r.left)/r.width,(e.clientY-r.top)/r.height]}
-function drawLive(){rafId=0;const c=live.getContext('2d');c.clearRect(0,0,S.cssW,S.cssH);if(cur)strokePath(c,S.pred&&S.pred.length?{...cur,p:cur.p.concat(S.pred)}:cur,S.cssW,S.cssH)}
-pageEl.addEventListener('pointerdown',e=>{
+const pvOf=e=>{const el=e.target&&e.target.closest?e.target.closest('.page'):null;return el?PV[+el.dataset.n]:null};
+function pt(e,pv){const r=pv.el.getBoundingClientRect();return[(e.clientX-r.left)/r.width,(e.clientY-r.top)/r.height]}
+function drawLive(){
+  rafId=0;const pv=PV[S.drawN];if(!pv||!pv.W)return;
+  const c=layerOf(pv,'live').getContext('2d');c.clearRect(0,0,pv.W,pv.H);
+  if(cur)strokePath(c,S.pred&&S.pred.length?{...cur,p:cur.p.concat(S.pred)}:cur,pv.W,pv.H);
+}
+pagesEl.addEventListener('pointerdown',e=>{
   const eraserEnd=e.pointerType==='pen'&&(e.buttons&32);
   if(!eraserEnd&&(!isDrawTool()||!canDrawWith(e.pointerType))||pinch)return;
   if(e.pointerType==='mouse'&&e.button!==0)return;
   if(activeId!==null)return;
+  const pv=pvOf(e);if(!pv||!pv.W)return;
   e.preventDefault();
-  try{pageEl.setPointerCapture(e.pointerId)}catch(_){}
-  activeId=e.pointerId;hideAllFloats();
+  try{pagesEl.setPointerCapture(e.pointerId)}catch(_){}
+  activeId=e.pointerId;S.drawN=pv.n;hideAllFloats();
   window.getSelection()?.removeAllRanges();
   S.erasing=eraserEnd||S.tool==='eraser';
-  if(S.erasing){eraseAt(pt(e));return}
+  if(S.erasing){eraseAt(pt(e,pv),pv);return}
   const t=S.tool,w=(t==='hl'?WIDTHS.hl[prefs.hlW]:WIDTHS.pen[prefs.penW])/600;
-  const q=pt(e);q.push(e.pointerType==='pen'?(e.pressure||.5):.5);
+  const q=pt(e,pv);q.push(e.pointerType==='pen'?(e.pressure||.5):.5);
   cur={t,c:t==='hl'?HL_COLORS[prefs.hlColor]:PEN_COLORS[prefs.penColor],w,p:[q]};
   drawLive();
 });
-pageEl.addEventListener('pointermove',e=>{
+pagesEl.addEventListener('pointermove',e=>{
   if(e.pointerId!==activeId)return;
+  const pv=PV[S.drawN];if(!pv)return;
   const evs=(e.getCoalescedEvents&&e.getCoalescedEvents())||[];
   const list=evs.length?evs:[e];
-  if(S.erasing){for(const ev of list)eraseAt(pt(ev));return}
+  if(S.erasing){for(const ev of list)eraseAt(pt(ev,pv),pv);return}
   if(!cur)return;
   for(const ev of list){
-    const q=pt(ev),l=cur.p[cur.p.length-1];
-    const dx=(q[0]-l[0])*S.cssW,dy=(q[1]-l[1])*S.cssH;
+    const q=pt(ev,pv),l=cur.p[cur.p.length-1];
+    const dx=(q[0]-l[0])*pv.W,dy=(q[1]-l[1])*pv.H;
     if(dx*dx+dy*dy<1)continue;
     q.push(ev.pointerType==='pen'?(ev.pressure||.5):.5);cur.p.push(q);
   }
-  S.pred=cur.t==='pen'&&e.getPredictedEvents?e.getPredictedEvents().slice(0,4).map(ev=>{const q=pt(ev);q.push(ev.pressure||.5);return q}):null;
+  S.pred=cur.t==='pen'&&e.getPredictedEvents?e.getPredictedEvents().slice(0,4).map(ev=>{const q=pt(ev,pv);q.push(ev.pressure||.5);return q}):null;
   if(!rafId)rafId=requestAnimationFrame(drawLive);
 });
 function endStroke(e){
@@ -448,15 +617,16 @@ function endStroke(e){
   activeId=null;suppressClickUntil=Date.now()+350;S.pred=null;
   if(S.erasing){S.erasing=false;return}
   if(!cur)return;
+  const n=S.drawN,pv=PV[n];
   cur.p=cur.p.map(a=>[+a[0].toFixed(5),+a[1].toFixed(5),+(a[2]??.5).toFixed(2)]);
-  cur.id=newId();touch(cur);pageArr('strokes',S.page).push(cur);S.undo.push({page:S.page,kind:'strokes',added:cur});
-  cur=null;live.getContext('2d').clearRect(0,0,S.cssW,S.cssH);drawInk();saveNotes();renderRightSoon();
+  cur.id=newId();touch(cur);pageArr('strokes',n).push(cur);S.undo.push({page:n,kind:'strokes',added:cur});
+  cur=null;if(pv&&pv.live)pv.live.getContext('2d').clearRect(0,0,pv.W,pv.H);drawInkFor(n);saveNotes();renderRightSoon();
 }
-pageEl.addEventListener('pointerup',endStroke);
-pageEl.addEventListener('pointercancel',e=>{if(e.pointerId===activeId){cur=null;activeId=null;S.erasing=false;drawLive()}});
-function eraseAt(q){
-  const W=S.cssW,H=S.cssH,R=10,px=q[0]*W,py=q[1]*H;
-  const arr=pageArr('strokes',S.page),gone=[];
+pagesEl.addEventListener('pointerup',endStroke);
+pagesEl.addEventListener('pointercancel',e=>{if(e.pointerId===activeId){cur=null;activeId=null;S.erasing=false;drawLive()}});
+function eraseAt(q,pv){
+  const n=pv.n,W=pv.W,H=pv.H,R=10,px=q[0]*W,py=q[1]*H;
+  const arr=pageArr('strokes',n),gone=[];
   for(let i=arr.length-1;i>=0;i--){
     const s=arr[i],tol=R+s.w*W/2;let hit=false;
     for(let j=0;j<s.p.length&&!hit;j++){
@@ -466,21 +636,21 @@ function eraseAt(q){
     }
     if(hit){gone.push({o:s,i});arr.splice(i,1);kill(s)}
   }
-  if(gone.length){S.undo.push({page:S.page,kind:'strokes',removed:gone});drawInk();saveNotes();renderRightSoon()}
+  if(gone.length){S.undo.push({page:n,kind:'strokes',removed:gone});drawInkFor(n);saveNotes();renderRightSoon()}
   // 消しゴムはメモ付きのハイライトは消さない(メモを守る)
-  const mk=pageArr('marks',S.page),mg=[];
-  for(let i=mk.length-1;i>=0;i--){if(!mk[i].memo&&hitMark(mk[i],px,py,R)){mg.push({o:mk[i],i});kill(mk[i]);mk.splice(i,1)}}
-  if(mg.length){S.undo.push({page:S.page,kind:'marks',removed:mg});drawMarks();saveNotes();renderRightSoon()}
+  const mk=pageArr('marks',n),mg=[];
+  for(let i=mk.length-1;i>=0;i--){if(!mk[i].memo&&hitMark(mk[i],px,py,R,W,H)){mg.push({o:mk[i],i});kill(mk[i]);mk.splice(i,1)}}
+  if(mg.length){S.undo.push({page:n,kind:'marks',removed:mg});drawMarksFor(n);saveNotes();renderRightSoon()}
 }
-function hitMark(m,px,py,pad){
-  const W=S.cssW,H=S.cssH;
-  return m.r.some(([x,y,w,h])=>px>=x*W-pad&&px<=(x+w)*W+pad&&py>=y*H-pad&&py<=(y+h)*H+pad);
-}
+function hitMark(m,px,py,pad,W,H){return m.r.some(([x,y,w,h])=>px>=x*W-pad&&px<=(x+w)*W+pad&&py>=y*H-pad&&py<=(y+h)*H+pad)}
 function markAt(clientX,clientY,pad){
-  const r=pageEl.getBoundingClientRect();
-  if(clientX<r.left||clientX>r.right||clientY<r.top||clientY>r.bottom)return null;
-  const px=clientX-r.left,py=clientY-r.top;
-  return (S.notes.marks[S.page]||[]).slice().reverse().find(m=>hitMark(m,px,py,pad))||null;
+  for(const n of S.rendered){
+    const pv=PV[n];if(!pv||!pv.W)continue;const r=pv.el.getBoundingClientRect();
+    if(clientX<r.left||clientX>r.right||clientY<r.top||clientY>r.bottom)continue;
+    const px=clientX-r.left,py=clientY-r.top;
+    return (S.notes.marks[n]||[]).slice().reverse().find(m=>hitMark(m,px,py,pad,pv.W,pv.H))||null;
+  }
+  return null;
 }
 function undo(){
   const op=S.undo.pop();if(!op){toast('戻せる操作はありません');return}
@@ -488,32 +658,51 @@ function undo(){
   if(op.added){const i=arr.lastIndexOf(op.added);if(i>=0)arr.splice(i,1);kill(op.added)}
   if(op.removed)for(const r of op.removed.slice().reverse()){touch(r.o);arr.splice(Math.min(r.i,arr.length),0,r.o)}
   saveNotes();hideAllFloats();
-  if(op.page!==S.page)go(op.page);else{drawInk();drawMarks()}
-  renderRight();updateStatus();
+  if(!S.rendered.has(op.page))go(op.page);
+  redrawAll();renderRight();updateStatus();
 }
 
-/* ---------- タッチ: ピンチ拡大・スワイプ ---------- */
+/* ---------- 拡大・縮小(ピンチ・Ctrl+ホイール)は、まず見た目だけ拡大し、止まったら描き直す ---------- */
+let zoomG=null,zoomT=0;
+function zoomPreview(f,cx,cy,commitDelay){
+  if(!S.pdf)return;
+  const sr=stage.getBoundingClientRect();
+  cx=cx??sr.left+sr.width/2;cy=cy??sr.top+sr.height/2;
+  if(!zoomG){
+    const pr=pagesEl.getBoundingClientRect();
+    zoomG={ratio:1,anchor:anchorAt(cx,cy)};
+    pagesEl.style.transformOrigin=(cx-pr.left)+'px '+(cy-pr.top)+'px';
+    hideAllFloats();
+  }
+  zoomG.ratio=Math.max(.3/S.scale,Math.min(6/S.scale,zoomG.ratio*f));
+  pagesEl.style.transform='scale('+zoomG.ratio+')';
+  clearTimeout(zoomT);if(commitDelay!=null)zoomT=setTimeout(zoomCommit,commitDelay);
+}
+function zoomCommit(){
+  clearTimeout(zoomT);const g=zoomG;zoomG=null;pagesEl.style.transform='';if(!g)return;
+  if(Math.abs(g.ratio-1)<.02)return;
+  S.fit='custom';setScale(S.scale*g.ratio,g.anchor);
+}
+function zoomBy(f,cx,cy){zoomPreview(f,cx,cy,160)}
 stage.addEventListener('touchstart',e=>{
   if(e.touches.length!==2||!isDoc())return;
   e.preventDefault();
   if(cur){cur=null;activeId=null;drawLive()}
-  const [a,b]=e.touches,r=pageEl.getBoundingClientRect(),sr=stage.getBoundingClientRect();
-  const cx=(a.clientX+b.clientX)/2,cy=(a.clientY+b.clientY)/2;
-  pinch={d0:Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY),ratio:1,ox:cx-r.left,oy:cy-r.top,nx:(cx-r.left)/r.width,ny:(cy-r.top)/r.height,cx:cx-sr.left,cy:cy-sr.top};
-  pageEl.style.transformOrigin=pinch.ox+'px '+pinch.oy+'px';
+  const [a,b]=e.touches;
+  pinch={d0:Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY),last:1,cx:(a.clientX+b.clientX)/2,cy:(a.clientY+b.clientY)/2};
+  zoomPreview(1,pinch.cx,pinch.cy,null);
 },{passive:false});
 stage.addEventListener('touchmove',e=>{
   if(!pinch||e.touches.length!==2)return;e.preventDefault();
-  const [a,b]=e.touches;pinch.ratio=Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY)/pinch.d0;
-  pinch.ratio=Math.max(.4/S.scale,Math.min(6/S.scale,pinch.ratio));
-  pageEl.style.transform='scale('+pinch.ratio+')';
+  const [a,b]=e.touches,r=Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY)/pinch.d0;
+  zoomPreview(r/pinch.last,pinch.cx,pinch.cy,null);pinch.last=r;
 },{passive:false});
 stage.addEventListener('touchend',e=>{
   if(!pinch||e.touches.length>=2)return;
-  const p=pinch;pinch=null;suppressClickUntil=Date.now()+400;pageEl.style.transform='';
-  if(Math.abs(p.ratio-1)<.03)return;
-  S.zoom=S.scale*p.ratio;S.fit='custom';render(p);
+  pinch=null;suppressClickUntil=Date.now()+400;zoomCommit();
 });
+
+/* ---------- タッチ: スワイプでページ送り、タップで操作 ---------- */
 let sw=null;
 stage.addEventListener('touchstart',e=>{
   if(e.touches.length!==1){sw=null;return}
@@ -559,21 +748,69 @@ function showTip(m,x,y){
 function hideTip(){clearTimeout(tipTimer);tipMark=null;$('tip').hidden=true}
 
 /* ===================== 文字の選択 ===================== */
-function hasSel(){const s=window.getSelection();return !!(s&&!s.isCollapsed&&s.rangeCount&&textLayer.contains(s.getRangeAt(0).commonAncestorContainer))}
-let selRange=null,selText='';
+const layerOfNode=n=>{const el=n&&(n.nodeType===1?n:n.parentElement);return el&&el.closest?el.closest('.textLayer'):null};
+function selInfo(){
+  const s=window.getSelection();if(!s||s.isCollapsed||!s.rangeCount)return null;
+  const r=s.getRangeAt(0),tl=layerOfNode(r.startContainer)||layerOfNode(r.endContainer);
+  if(!tl||!pagesEl.contains(tl))return null;
+  return {range:r,n:+tl.parentElement.dataset.n};
+}
+function hasSel(){return !!selInfo()}
+let selRange=null,selText='',selPage=0;
 document.addEventListener('selectionchange',()=>{
+  fixSelectionEnd();
   if(!isDoc())return;
-  const s=window.getSelection();
-  if(s&&!s.isCollapsed&&s.rangeCount&&textLayer.contains(s.getRangeAt(0).commonAncestorContainer)){
-    selRange=s.getRangeAt(0).cloneRange();selText=cleanText(s.toString());
+  const si=selInfo();
+  if(si){
+    selRange=si.range.cloneRange();selPage=si.n;selText=cleanText(window.getSelection().toString());
     if(selText){hideAsk();if(!$('annoCard').hidden&&!annoEditing())hideAnno();$('palette').hidden=true;if(!mouseSelecting)showSelBar();return}
   }
   setTimeout(()=>{if(!hasSel())$('selBar').hidden=true},250);
 });
+/* 選択が急に広がらないようにする(PDF.jsと同じ方法)
+   文字のない所に指やマウスが来たとき、選択の終わりのすぐ後ろに「受け皿」を置いて、
+   ページの最後まで一気に選ばれてしまうのを防ぐ */
+let prevSelRange=null;
+function resetEnd(pv){if(!pv||!pv.end||!pv.text)return;pv.end.classList.remove('active');pv.end.style.width='';pv.end.style.height='';if(pv.end.parentNode!==pv.text||pv.end!==pv.text.lastChild)pv.text.appendChild(pv.end)}
+function fixSelectionEnd(){
+  const sel=window.getSelection();
+  if(!sel||!sel.rangeCount){for(const n of S.rendered)resetEnd(PV[n]);prevSelRange=null;return}
+  const range=sel.getRangeAt(0);
+  for(const n of S.rendered){const pv=PV[n];if(!pv||!pv.text||!pv.end)continue;
+    if(range.intersectsNode(pv.text))pv.end.classList.add('active');else resetEnd(pv)}
+  if(sel.isCollapsed){prevSelRange=null;return}
+  const modifyStart=prevSelRange&&(range.compareBoundaryPoints(Range.END_TO_END,prevSelRange)===0||range.compareBoundaryPoints(Range.START_TO_END,prevSelRange)===0);
+  let anchor=modifyStart?range.startContainer:range.endContainer;
+  if(anchor.nodeType===3)anchor=anchor.parentNode;
+  const parent=anchor&&anchor.parentElement,tl=parent&&parent.closest&&parent.closest('.textLayer');
+  if(tl&&anchor.classList&&!anchor.classList.contains('endOfContent')){
+    const pv=PV[+tl.parentElement.dataset.n];
+    if(pv&&pv.end){pv.end.style.width=pv.W+'px';pv.end.style.height=pv.H+'px';parent.insertBefore(pv.end,modifyStart?anchor:anchor.nextSibling)}
+  }
+  prevSelRange=range.cloneRange();
+}
+document.addEventListener('mouseup',()=>{const s=window.getSelection();if(!s||s.isCollapsed)for(const n of S.rendered)resetEnd(PV[n])});
 let mouseSelecting=false;
 stage.addEventListener('pointerdown',e=>{if(e.pointerType==='mouse'&&e.button===0)mouseSelecting=true},true);
 document.addEventListener('pointerup',e=>{if(e.pointerType==='mouse'&&mouseSelecting){mouseSelecting=false;if(hasSel())showSelBar()}});
-function selClientRects(){if(!selRange)return[];return [...selRange.getClientRects()].filter(r=>r.width>1&&r.height>1)}
+/* 選んだ文字の位置を、文字そのものから求める(箱全体や空白を含めない) */
+function textClientRects(range,layer){
+  const out=[];if(!range||!layer)return out;
+  const walker=document.createTreeWalker(layer,NodeFilter.SHOW_TEXT);let node;
+  while((node=walker.nextNode())){
+    if(!range.intersectsNode(node))continue;
+    const txt=node.textContent;let s=0,e=txt.length;
+    if(node===range.startContainer)s=range.startOffset;
+    if(node===range.endContainer)e=range.endOffset;
+    while(s<e&&/\s/.test(txt[s]))s++;
+    while(e>s&&/\s/.test(txt[e-1]))e--;
+    if(e<=s)continue;
+    const r=document.createRange();r.setStart(node,s);r.setEnd(node,e);
+    for(const c of r.getClientRects())if(c.width>.5&&c.height>.5)out.push(c);
+  }
+  return out;
+}
+function selClientRects(){const pv=PV[selPage];return selRange&&pv?textClientRects(selRange,pv.text):[]}
 function bounds(){const r=stage.getBoundingClientRect();return{top:r.top+6,bottom:r.bottom-62,left:r.left+6,right:r.right-6}}
 // 浮かぶ部品を目印(anchor)の上か下に置く
 function placeNear(el,a,prefer){
@@ -594,30 +831,32 @@ function showSelBar(){
   if(wasHidden)popIn(bar);
 }
 function cleanText(t){return t.replace(/-\s*\n\s*/g,'').replace(/\s+/g,' ').trim()}
-function selRects(range){
-  const pr=pageEl.getBoundingClientRect(),W=pr.width,H=pr.height;
-  let rs=[...range.getClientRects()].map(r=>({x:r.left-pr.left,y:r.top-pr.top,w:r.width,h:r.height})).filter(r=>r.w>1&&r.h>1&&r.x<W&&r.y<H&&r.x+r.w>0&&r.y+r.h>0);
+// 選んだ範囲を、ページに対する割合の四角形(1行に1つ)にする
+function selRects(range,pv){
+  const pr=pv.el.getBoundingClientRect(),W=pr.width,H=pr.height;
+  let rs=textClientRects(range,pv.text).map(c=>{
+    const x1=Math.max(0,c.left-pr.left),y1=Math.max(0,c.top-pr.top),x2=Math.min(W,c.right-pr.left),y2=Math.min(H,c.bottom-pr.top);
+    return {x:x1,y:y1,w:x2-x1,h:y2-y1};
+  }).filter(r=>r.w>.5&&r.h>.5);
   if(!rs.length)return[];
-  const hs=rs.map(r=>r.h).sort((a,b)=>a-b),med=hs[Math.floor(hs.length/2)];
-  rs=rs.filter(r=>r.h<=med*2.2);
   rs.sort((a,b)=>(a.y+a.h/2)-(b.y+b.h/2)||a.x-b.x);
   const lines=[];
   for(const r of rs){
-    const l=lines.find(l=>Math.abs((l.y+l.h/2)-(r.y+r.h/2))<Math.min(l.h,r.h)*.5&&r.x<=l.x+l.w+Math.max(l.h,r.h)*1.5&&r.x+r.w>=l.x-Math.max(l.h,r.h)*1.5);
+    const l=lines.find(l=>Math.abs((l.y+l.h/2)-(r.y+r.h/2))<Math.min(l.h,r.h)*.5);
     if(l){const x2=Math.max(l.x+l.w,r.x+r.w),y2=Math.max(l.y+l.h,r.y+r.h);l.x=Math.min(l.x,r.x);l.y=Math.min(l.y,r.y);l.w=x2-l.x;l.h=y2-l.y}
     else lines.push({...r});
   }
   const f=v=>+v.toFixed(5);
-  return lines.map(l=>[f(Math.max(0,l.x)/W),f(Math.max(0,l.y)/H),f(Math.min(l.w,W)/W),f(Math.min(l.h,H)/H)]);
+  return lines.map(l=>[f(l.x/W),f(l.y/H),f(l.w/W),f(l.h/H)]);
 }
 function clearSel(){window.getSelection()?.removeAllRanges();selRange=null;$('selBar').hidden=true}
 function addMark(type,ci,opt={}){
-  if(!selRange)return null;
-  const r=selRects(selRange);if(!r.length){toast('この部分には印を付けられません');return null}
+  const pv=PV[selPage];if(!selRange||!pv)return null;
+  const r=selRects(selRange,pv);if(!r.length){toast('この部分には印を付けられません');return null}
   const m={id:newId(),t:type,ci,r,text:selText.slice(0,1000),at:Date.now()};touch(m);
-  pageArr('marks',S.page).push(m);S.undo.push({page:S.page,kind:'marks',added:m});
+  pageArr('marks',pv.n).push(m);S.undo.push({page:pv.n,kind:'marks',added:m});
   prefs.markCi=ci;savePrefs();renderSelDots();
-  saveNotes();drawMarks();clearSel();renderRight();updateStatus();
+  saveNotes();drawMarksFor(pv.n);clearSel();renderRight();updateStatus();
   if(opt.memo)openAnno(m,{edit:true,fresh:true});
   else if(prefs.askMemo)showAsk(m);
   return m;
@@ -632,7 +871,7 @@ function renderSelDots(){
 for(const id of ['ulBtn','selBmBtn','trBtn','memoBtn'])$(id).addEventListener('pointerdown',e=>e.preventDefault());
 $('ulBtn').onclick=()=>addMark('ul',prefs.markCi);
 $('memoBtn').onclick=()=>addMark('hl',prefs.markCi,{memo:true});
-$('selBmBtn').onclick=()=>{addBookmark(S.page,selText.slice(0,120));clearSel()};
+$('selBmBtn').onclick=()=>{addBookmark(selPage||S.page,selText.slice(0,120));clearSel()};
 
 /* ===================== メモ ===================== */
 // ハイライト直後に「メモを追加しますか？」
@@ -666,12 +905,12 @@ function openAnno(m,opt={}){
   $('acType').title=m.t==='hl'?'下線に変更':'ハイライトに変更';
   const box=$('acDots');box.innerHTML='';
   MARKS.forEach((c,i)=>{const b=document.createElement('button');b.className='dot';b.style.background=m.t==='hl'?c.hl:c.ul;b.title=c.name;b.setAttribute('aria-pressed',i===m.ci);
-    b.onclick=()=>{m.ci=i;touch(m);saveNotes();drawMarks();renderRight();openAnno(m)};box.appendChild(b)});
+    b.onclick=()=>{m.ci=i;touch(m);saveNotes();redrawAll();renderRight();openAnno(m)};box.appendChild(b)});
   const wasHidden=card.hidden;card.hidden=false;card.dataset.fresh=opt.fresh?'1':'';
   if(edit){$('acEdit').value=m.memo||'';}
   placeAnno();
   if(wasHidden)popIn(card);
-  if(edit){const t=$('acEdit');const f=()=>{t.focus();t.setSelectionRange(t.value.length,t.value.length)};f();setTimeout(f,30)}
+  if(edit){const t=$('acEdit');const f=()=>{t.focus({preventScroll:true});t.setSelectionRange(t.value.length,t.value.length)};f();setTimeout(f,30)}
   highlightActiveCard();
 }
 function placeAnno(){if(!annoMark||$('annoCard').hidden)return;placeNear($('annoCard'),unionRect(markClientRects(annoMark)),'below')}
@@ -682,7 +921,7 @@ function saveMemo(){
   const had=!!m.memo;
   if(v.trim()){m.memo=v;m.memoAt=Date.now()}else{delete m.memo;delete m.memoAt}
   touch(m);
-  saveNotes();drawMarks();renderRight();updateStatus();
+  saveNotes();redrawAll();renderRight();updateStatus();
   if(v.trim())toast(had?'メモを更新しました':'メモを保存しました');else if(had)toast('メモを削除しました');
 }
 $('acEditBtn').onclick=()=>annoMark&&openAnno(annoMark,{edit:true});
@@ -692,12 +931,12 @@ $('acEdit').addEventListener('keydown',e=>{
   if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)){e.preventDefault();$('acSave').click()}
   else if(e.key==='Escape'){e.preventDefault();e.stopPropagation();$('acCancel').click()}
 });
-$('acType').onclick=()=>{const m=annoMark;if(!m)return;m.t=m.t==='hl'?'ul':'hl';touch(m);saveNotes();drawMarks();renderRight();openAnno(m)};
+$('acType').onclick=()=>{const m=annoMark;if(!m)return;m.t=m.t==='hl'?'ul':'hl';touch(m);saveNotes();redrawAll();renderRight();openAnno(m)};
 $('acDel').onclick=()=>{
   const m=annoMark;if(!m)return;
-  const doDel=()=>{const arr=pageArr('marks',S.page),i=arr.indexOf(m);
-    if(i>=0){arr.splice(i,1);kill(m);S.undo.push({page:S.page,kind:'marks',removed:[{o:m,i}]})}
-    saveNotes();drawMarks();hideAnno();renderRight();updateStatus();toast('削除しました（Ctrl+Z で元に戻せます）')};
+  const doDel=()=>{const p=pageOfMark(m),arr=pageArr('marks',p),i=arr.indexOf(m);
+    if(i>=0){arr.splice(i,1);kill(m);S.undo.push({page:p,kind:'marks',removed:[{o:m,i}]})}
+    saveNotes();drawMarksFor(p);hideAnno();renderRight();updateStatus();toast('削除しました（Ctrl+Z で元に戻せます）')};
   if(m.memo)confirmSheet('ハイライトを削除','このハイライトと、書いたメモを削除します。','削除',doDel);else doDel();
 };
 // カードの外をクリックしたら閉じる(書きかけのメモは保存する)
@@ -715,12 +954,17 @@ document.addEventListener('pointerdown',e=>{
 // メモ一覧から該当箇所へ
 async function jumpToMark(p,m,opt={}){
   hideAllFloats();if(narrow()&&prefs.right){prefs.right=false;applyPanels();await new Promise(r=>setTimeout(r,60))}
-  if(S.page!==p)await go(p);
-  const [,y,,h]=m.r[0],top=pageEl.offsetTop+y*S.cssH,bottom=pageEl.offsetTop+(y+h)*S.cssH;
-  if(top<stage.scrollTop+16||bottom>stage.scrollTop+stage.clientHeight-80)
-    stage.scrollTo({top:Math.max(0,top-stage.clientHeight*.3),behavior:motionOK()?'smooth':'auto'});
+  if(!scrollMode()&&S.page!==p)await go(p);
+  const el=PV[p].el,[,y,,h]=m.r[0];
+  const top=el.offsetTop+y*el.offsetHeight,bottom=el.offsetTop+(y+h)*el.offsetHeight;
+  let moved=false;
+  if(top<stage.scrollTop+16||bottom>stage.scrollTop+stage.clientHeight-80){
+    const far=Math.abs(top-stage.scrollTop)>stage.clientHeight*2.5;
+    stage.scrollTo({top:Math.max(0,top-stage.clientHeight*.3),behavior:motionOK()&&!far?'smooth':'auto'});moved=true;
+  }
+  if(scrollMode()){scheduleVisible();await renderPage(p)}
   S.activeMark=m.id;highlightActiveCard();
-  setTimeout(()=>{flashMark(m);if(opt.open)openAnno(m,{edit:!!opt.edit})},motionOK()?260:0);
+  setTimeout(()=>{flashMark(m);if(opt.open)openAnno(m,{edit:!!opt.edit})},moved&&motionOK()?320:30);
 }
 
 /* ===================== 浮かぶ部品の管理 ===================== */
@@ -778,7 +1022,7 @@ $('nextBtn').onclick=()=>go(S.page+1);
 $('pageInput').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();go(parseInt(e.target.value,10));e.target.blur()}else if(e.key==='Escape')e.target.blur()});
 $('pageInput').addEventListener('focus',e=>setTimeout(()=>e.target.select(),0));
 $('pageInput').addEventListener('blur',e=>{const v=parseInt(e.target.value,10);if(v&&v!==S.page)go(v);else e.target.value=S.page});
-$('fitBtn').onclick=()=>{S.fit=S.fit==='page'?'width':'page';prefs.fit=S.fit;savePrefs();render()};
+$('fitBtn').onclick=()=>{S.fit=S.fit==='page'?'width':'page';prefs.fit=S.fit;savePrefs();refit()};
 function allMarks(){const out=[];if(!S.notes)return out;for(const [p,arr] of Object.entries(S.notes.marks))for(const m of arr)out.push({p:+p,m});
   out.sort((a,b)=>a.p-b.p||a.m.r[0][1]-b.m.r[0][1]||a.m.r[0][0]-b.m.r[0][0]);return out}
 function updateStatus(){
@@ -999,7 +1243,7 @@ function toggle(val,on){
   const b=document.createElement('button');b.className='switch';b.setAttribute('role','switch');b.setAttribute('aria-checked',!!val);
   b.onclick=()=>{const v=b.getAttribute('aria-checked')!=='true';b.setAttribute('aria-checked',v);on(v)};return b;
 }
-function setLook(k,v){prefs.look[k]=v;savePrefs();applyTheme();if(isDoc()&&k==='size')setTimeout(()=>render(),50)}
+function setLook(k,v){prefs.look[k]=v;savePrefs();applyTheme();if(isDoc()&&k==='size')setTimeout(refit,50)}
 function bgPicker(mode){
   const g=document.createElement('div');g.className='bgs';
   for(const [k,p] of Object.entries(PRESETS[mode])){
@@ -1033,8 +1277,9 @@ async function renderSettings(){
   }else if(setTab==='read'){
     h.textContent='読書と注釈';
     B.append(row('ハイライトのあとにメモを聞く','色を付けたあと「メモを追加しますか？」と表示します。オフにしても、ハイライトをクリックすればいつでもメモを書けます。',toggle(prefs.askMemo,v=>{prefs.askMemo=v;savePrefs()})));
-    B.append(row('開いたときの表示',null,seg([['page','ページ全体'],['width','幅に合わせる']],prefs.fit,v=>{prefs.fit=v;S.fit=v;savePrefs();if(isDoc())render()})));
-    B.append(row('マウスホイールでページをめくる','ページの端でさらにホイールを回すと、次・前のページへ移ります。',toggle(prefs.wheelTurn,v=>{prefs.wheelTurn=v;savePrefs()})));
+    B.append(row('開いたときの表示',null,seg([['page','ページ全体'],['width','幅に合わせる']],prefs.fit,v=>{prefs.fit=v;S.fit=v;savePrefs();refit()})));
+    B.append(row('ページの送り方','「スクロール」は上下のページがつながり、なめらかに読み進められます。「1ページずつ」は紙をめくるように切り替えます。',seg([['scroll','スクロール'],['paged','1ページずつ']],prefs.view,v=>setView(v))));
+    B.append(row('マウスホイールでページをめくる（1ページずつのとき）','ページの端でさらにホイールを回すと、次・前のページへ移ります。',toggle(prefs.wheelTurn,v=>{prefs.wheelTurn=v;savePrefs()})));
     B.append(row('タッチ操作でも描く','タッチ画面でペンがないときに使います。オフのときはタッチで画面操作、ペンとマウスで描画です。',toggle(S.finger,v=>setFinger(v))));
   }else if(setTab==='sync'){
     h.textContent='同期';syncSettings(B);
@@ -1151,14 +1396,18 @@ document.addEventListener('keydown',e=>{
   if(ctrl&&k.toLowerCase()==='z'){e.preventDefault();undo();return}
   if(ctrl&&(k==='='||k==='+'||k===';')){e.preventDefault();zoomBy(1.2);return}
   if(ctrl&&k==='-'){e.preventDefault();zoomBy(1/1.2);return}
-  if(ctrl&&k==='0'){e.preventDefault();S.fit=prefs.fit;render();return}
+  if(ctrl&&k==='0'){e.preventDefault();S.fit=prefs.fit;refit();return}
   if(ctrl||e.altKey)return;
   const sel=hasSel();
   if(sel&&/^[1-4]$/.test(k)){e.preventDefault();addMark('hl',+k-1);return}
   if(sel&&(k==='m'||k==='M')){e.preventDefault();addMark('hl',prefs.markCi,{memo:true});return}
   if(sel&&(k==='u'||k==='U')){e.preventDefault();addMark('ul',prefs.markCi);return}
   if(sel&&(k==='t'||k==='T')){e.preventDefault();translateSel();return}
-  if(k==='ArrowRight'||k==='ArrowDown'&&S.fit==='page'||k==='PageDown'||k===' '){e.preventDefault();go(S.page+1)}
+  if(scrollMode()&&(k==='ArrowDown'||k==='ArrowUp'||k==='PageDown'||k==='PageUp'||k===' ')){
+    e.preventDefault();const big=k!=='ArrowDown'&&k!=='ArrowUp',d=(k==='ArrowUp'||k==='PageUp'||(k===' '&&e.shiftKey))?-1:1;
+    stage.scrollBy({top:d*(big?stage.clientHeight*.88:90),behavior:motionOK()?'smooth':'auto'});
+  }
+  else if(k==='ArrowRight'||k==='ArrowDown'&&S.fit==='page'||k==='PageDown'||k===' '){e.preventDefault();go(S.page+1)}
   else if(k==='ArrowLeft'||k==='ArrowUp'&&S.fit==='page'||k==='PageUp'){e.preventDefault();go(S.page-1)}
   else if(k==='Home'){e.preventDefault();go(1)}else if(k==='End'){e.preventDefault();go(S.pdf.numPages)}
   else if(k==='Escape'){
@@ -1167,6 +1416,7 @@ document.addEventListener('keydown',e=>{
     else if(!isFull)showHome();
   }
   else if(k==='v')setTool('select');else if(k==='p')setTool('pen');else if(k==='h')setTool('hl');else if(k==='e')setTool('eraser');
+  else if(k==='s'||k==='S')setView(scrollMode()?'paged':'scroll');
   else if(k==='b')$('bmBtn').click();else if(k==='g'){e.preventDefault();$('pageInput').focus()}
   else if(k==='f')app.classList.toggle('hidebars');
 });
@@ -1341,7 +1591,7 @@ function applyToOpen(merged){
   const n=S.notes;n.marks=merged.marks;n.strokes=merged.strokes;n.bookmarks=merged.bookmarks;n.dead=merged.dead;
   DB.put('notes',n).catch(()=>{});
   if(annoMark&&!allMarks().some(x=>x.m===annoMark))hideAnno();
-  drawMarks();drawInk();renderRight();updateStatus();updateBmBtn();if(prefs.ltab==='bm')renderLeft();
+  redrawAll();renderRight();updateStatus();updateBmBtn();if(prefs.ltab==='bm')renderLeft();
 }
 let thumbing=false;
 async function makeThumbsLater(){
@@ -1384,8 +1634,11 @@ N.onClosing&&N.onClosing(async()=>{
     clearTimeout(notesT);clearTimeout(metaT);
     if(S.notes)await DB.put('notes',S.notes);if(S.meta)await DB.put('meta',S.meta);
     if(SYNC.on&&SYNC.dirty.size){
-      for(let i=0;i<30&&SYNC.busy;i++)await new Promise(r=>setTimeout(r,100));
-      clearTimeout(SYNC.timer);SYNC.due=0;await syncRun();
+      // 待つのは最大でも約2秒(終わらなかった分は次に開いたときに同期される)
+      const t0=Date.now();
+      while(SYNC.busy&&Date.now()-t0<800)await new Promise(r=>setTimeout(r,100));
+      clearTimeout(SYNC.timer);SYNC.due=0;
+      await Promise.race([syncRun(),new Promise(r=>setTimeout(r,1300))]);
     }
   }catch(e){}
   N.closingDone&&N.closingDone();
@@ -1460,17 +1713,10 @@ document.addEventListener('mousemove',e=>{
   if(near){app.classList.remove('hidebars');clearTimeout(barT)}
   else if(!app.classList.contains('hidebars')&&!anyFloatOpen()&&!hasSel()){clearTimeout(barT);barT=setTimeout(()=>{if(isFull)app.classList.add('hidebars')},900)}
 });
-let wz=null,wheelAcc=0,wheelT=0,lastTurn=0,wheelLock=false,wheelLockT=0;
-function zoomBy(f,cx,cy){
-  const sr=stage.getBoundingClientRect(),r=pageEl.getBoundingClientRect();
-  cx=cx??sr.left+sr.width/2;cy=cy??sr.top+sr.height/2;
-  if(!wz){wz={ratio:1,nx:(cx-r.left)/r.width,ny:(cy-r.top)/r.height,cx:cx-sr.left,cy:cy-sr.top};pageEl.style.transformOrigin=(cx-r.left)+'px '+(cy-r.top)+'px'}
-  wz.ratio=Math.max(.3/S.scale,Math.min(6/S.scale,wz.ratio*f));
-  pageEl.style.transform='scale('+wz.ratio+')';hideAllFloats();
-  clearTimeout(wheelT);wheelT=setTimeout(()=>{const p=wz;wz=null;pageEl.style.transform='';S.zoom=S.scale*p.ratio;S.fit='custom';render(p)},160);
-}
+let wheelAcc=0,lastTurn=0,wheelLock=false,wheelLockT=0;
 stage.addEventListener('wheel',e=>{
   if(e.ctrlKey){e.preventDefault();zoomBy(Math.exp(-e.deltaY*0.0022),e.clientX,e.clientY);return}
+  if(scrollMode())return; // スクロール表示では、そのまま上下に流れる
   if(!prefs.wheelTurn||Math.abs(e.deltaX)>Math.abs(e.deltaY))return;
   if(wheelLock){clearTimeout(wheelLockT);wheelLockT=setTimeout(()=>{wheelLock=false},180);return}
   const max=stage.scrollHeight-stage.clientHeight;

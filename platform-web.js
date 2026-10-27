@@ -73,7 +73,7 @@
     saveNeedsTap: true,
     savePdf: (name, data) => share(name, data, 'application/pdf'),
     saveText: (name, text) => share(name, text, 'text/markdown'),
-    appInfo: async () => ({ version: '2.2.0（iPad版）', dataPath: '' }),
+    appInfo: async () => ({ version: '2.3.2（iPad版）', dataPath: '' }),
     syncConfig: async () => { await ready; return info(); },
     syncSetClient: async o => {
       o = o || {};
