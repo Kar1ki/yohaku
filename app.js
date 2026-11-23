@@ -196,6 +196,7 @@ function closeDoc(){
   if(S.pdf){try{S.pdf.destroy()}catch(e){}S.pdf=null}
   S.id=null;S.meta=null;S.notes=null;S.outline=null;
   pagesEl.innerHTML='';PV=[];pageBase=[];S.rendered.clear();charModels.clear();tsel=null;tselChars=null;
+  findText.clear();FIND.token++;FIND.q='';FIND.hits=[];FIND.cur=-1;curHit=null;FIND.busy=false;$('findInput').value='';updateFindUI();if(prefs.ltab==='find')renderLeft();
 }
 async function openBook(id){
   const meta=await DB.get('meta',id),blob=await DB.get('blobs',id);
@@ -429,6 +430,7 @@ async function renderPage(n){
   pv.canvas.getContext('2d',{alpha:false}).drawImage(bm.c,0,0);
   pv.W=bm.W;pv.H=bm.H;pv.key=key;pv.busy=null;
   drawMarksFor(n);drawInkFor(n);
+  if(FIND.hits.some(h=>h.n===n))drawFind(n);
   renderText(n,sc);
   if(TOUCH)charModel(n).catch(()=>{});
 }
@@ -1143,6 +1145,191 @@ async function jumpToMark(p,m,opt={}){
   setTimeout(()=>{flashMark(m);if(opt.open)openAnno(m,{edit:!!opt.edit})},moved&&motionOK()?320:30);
 }
 
+/* ===================== 本文の検索 =====================
+   左パネルの「検索」タブ(Ctrl+F)で単語を入れると、全ページから探して一覧にする。
+   本文の該当箇所は黄色、いま選んでいる1件はオレンジで示す。
+   行末で切れた単語(oppor- tunity)や、改行で分かれた日本語の文もつなげて探す。
+   全角・半角、大文字・小文字の違いは区別しない。 */
+const FIND={q:'',hits:[],cur:-1,token:0,done:0,total:0,busy:false};
+const findText=new Map();   // ページ → {s:探す用の文字列, map:文字列の位置→文字番号, chars}
+const normCh=c=>c.normalize('NFKC').toLowerCase();
+const isCJK=c=>/[　-ヿ㐀-鿿豈-﫿！-｠]/.test(c||'');
+async function pageFindText(n){
+  if(findText.has(n))return findText.get(n);
+  const chars=await charModel(n);
+  let s='',map=[],disp=[];
+  const push=(str,i,orig)=>{let first=true;for(const ch of str){s+=ch;map.push(i);disp.push(first?(orig??ch):'');first=false}};
+  for(let i=0;i<chars.length;i++){
+    const c=chars[i];
+    if(i>0){
+      const p=chars[i-1],brk=p.eol||!sameLine(p,c);
+      if(brk){
+        // 行末のハイフンで切れた単語はつなげる
+        if(/[-‐]/.test(p.ch)&&/[A-Za-z]/.test(c.ch)&&s.endsWith(normCh(p.ch))&&/[a-z]$/i.test(s.slice(-2,-1))){s=s.slice(0,-1);map.pop();disp.pop()}
+        else if(!(isCJK(p.ch)&&isCJK(c.ch))&&!s.endsWith(' '))push(' ',-1);
+      }else if(!isSpace(p)&&!isSpace(c)&&c.x0-p.x1>c.fh*.15&&!s.endsWith(' '))push(' ',-1);
+    }
+    if(isSpace(c)){if(s&&!s.endsWith(' '))push(' ',i);continue}
+    push(normCh(c.ch),i,c.ch);
+  }
+  const r={s,map,chars,disp};findText.set(n,r);return r;
+}
+const findQuery=q=>q.normalize('NFKC').toLowerCase().replace(/\s+/g,' ').trim();
+let findT=0;
+function startFind(raw){
+  clearTimeout(findT);
+  findT=setTimeout(()=>runFind(raw),220);
+}
+async function runFind(raw){
+  const q=findQuery(raw||'');
+  const tok=++FIND.token;
+  FIND.q=q;FIND.hits=[];FIND.cur=-1;FIND.done=0;
+  redrawFind();updateFindUI();
+  if(!q||!S.pdf){FIND.busy=false;updateFindUI();if(prefs.ltab==='find')renderLeft();return}
+  FIND.busy=true;FIND.total=S.pdf.numPages;
+  // 今のページから順に探し、最初に見つかった所へすぐ移れるようにする
+  const start=S.page||1,N=S.pdf.numPages,order=[];
+  for(let k=0;k<N;k++)order.push((start-1+k)%N+1);
+  const per=new Map();let jumped=false,lastUI=0;
+  for(const n of order){
+    let t;try{t=await pageFindText(n)}catch(e){FIND.done++;continue}
+    if(tok!==FIND.token)return;
+    const list=[];let i=t.s.indexOf(q);
+    while(i>=0&&list.length<300){
+      const a=t.map.slice(i,i+q.length).filter(v=>v>=0);
+      if(a.length)list.push({n,a:Math.min(...a),b:Math.max(...a),pos:i});
+      i=t.s.indexOf(q,i+Math.max(1,q.length));
+    }
+    per.set(n,list);FIND.done++;
+    if(list.length){
+      FIND.hits=[...per.keys()].sort((x,y)=>x-y).flatMap(k=>per.get(k));
+      if(!jumped){jumped=true;FIND.cur=FIND.hits.indexOf(list[0]);showHit(false)}
+      else FIND.cur=FIND.hits.indexOf(curHit);
+      redrawFind();
+    }
+    if(Date.now()-lastUI>150){lastUI=Date.now();updateFindUI();if(prefs.ltab==='find')renderFindList()}
+    if(FIND.done%8===0)await new Promise(r=>setTimeout(r,0));
+  }
+  FIND.busy=false;
+  FIND.hits=[...per.keys()].sort((x,y)=>x-y).flatMap(k=>per.get(k));
+  FIND.cur=curHit?FIND.hits.indexOf(curHit):-1;
+  updateFindUI();if(prefs.ltab==='find')renderFindList();
+}
+let curHit=null;
+// 見つかった所を本文に描く
+function drawFind(n){
+  const pv=PV[n];if(!pv||!pv.el)return;
+  let L=pv.el.querySelector('.fhl');
+  const hits=FIND.hits.filter(h=>h.n===n);
+  if(!hits.length){if(L)L.remove();return}
+  const t=findText.get(n);if(!t)return;
+  if(!L){L=document.createElement('div');L.className='fhl';pv.el.appendChild(L)}
+  L.innerHTML='';
+  const P=v=>(v*100)+'%';
+  for(const h of hits){
+    for(const l of tselLines(t.chars,h.a,h.b)){
+      const r=document.createElement('i');if(h===curHit)r.className='cur';
+      r.style.left=P(l.x0-0.002);r.style.top=P(l.t-0.002);r.style.width=P(l.x1-l.x0+0.004);r.style.height=P(l.b-l.t+0.004);
+      L.appendChild(r);
+    }
+  }
+}
+function redrawFind(){
+  document.querySelectorAll('.fhl').forEach(L=>{const n=+L.parentElement.dataset.n;if(!FIND.hits.some(h=>h.n===n))L.remove()});
+  const pages=new Set(FIND.hits.map(h=>h.n));
+  for(const n of pages)drawFind(n);
+}
+// 1件を画面に出す
+async function showHit(scroll=true){
+  const h=FIND.hits[FIND.cur];curHit=h||null;
+  updateFindUI();
+  if(!h)return;
+  redrawFind();
+  const t=findText.get(h.n),l=t&&tselLines(t.chars,h.a,h.b)[0];
+  if(!scrollMode()&&S.page!==h.n)await go(h.n);
+  const el=PV[h.n].el;
+  if(l){
+    const top=el.offsetTop+l.t*el.offsetHeight,bottom=el.offsetTop+l.b*el.offsetHeight;
+    if(top<stage.scrollTop+20||bottom>stage.scrollTop+stage.clientHeight-90){
+      const far=Math.abs(top-stage.scrollTop)>stage.clientHeight*2.5;
+      stage.scrollTo({top:Math.max(0,top-stage.clientHeight*.35),behavior:motionOK()&&!far?'smooth':'auto'});
+    }
+    const left=el.offsetLeft+l.x0*el.offsetWidth,right=el.offsetLeft+l.x1*el.offsetWidth;
+    if(left<stage.scrollLeft||right>stage.scrollLeft+stage.clientWidth)stage.scrollLeft=Math.max(0,left-stage.clientWidth*.3);
+  }
+  if(scrollMode()){scheduleVisible();await renderPage(h.n)}
+  drawFind(h.n);
+  const row=$('leftBody').querySelector('.hrow.cur');if(row)row.scrollIntoView({block:'nearest'});
+}
+function stepHit(d){
+  if(!FIND.hits.length)return;
+  FIND.cur=(FIND.cur+d+FIND.hits.length)%FIND.hits.length;
+  showHit();if(prefs.ltab==='find')markFindCurrent();
+}
+function clearFind(){
+  FIND.token++;FIND.q='';FIND.hits=[];FIND.cur=-1;curHit=null;FIND.busy=false;
+  $('findInput').value='';redrawFind();updateFindUI();if(prefs.ltab==='find')renderLeft();
+}
+function openFind(){
+  if(!isDoc())return;
+  prefs.ltab='find';if(!prefs.left)toggleLeft(true);else renderLeft();
+  savePrefs();
+  const i=$('findInput');i.focus();i.select();setTimeout(()=>{if(document.activeElement!==i){i.focus();i.select()}},30);
+}
+function findStatusText(){
+  if(!FIND.q)return '';
+  const prog=FIND.busy?'（検索中 '+FIND.done+'/'+FIND.total+'）':'';
+  if(!FIND.hits.length)return FIND.busy?'検索中… '+FIND.done+'/'+FIND.total:'見つかりませんでした';
+  return (FIND.cur>=0?(FIND.cur+1)+' / ':'')+FIND.hits.length+'件'+prog;
+}
+function updateFindUI(){
+  const txt=findStatusText();
+  $('findStatus').textContent=txt;
+  $('fbCount').textContent=FIND.hits.length?(FIND.cur>=0?(FIND.cur+1)+' / ':'')+FIND.hits.length:(FIND.busy?'…':'0件');
+  $('findBar').hidden=!FIND.q||!isDoc();
+  $('fbQuery').textContent=$('findInput').value.trim();
+  for(const id of ['findPrev','findNext','fbPrev','fbNext'])$(id).disabled=!FIND.hits.length;
+}
+// 一覧(前後の文も少し見せる)
+function renderFindList(){
+  if(prefs.ltab!=='find')return;
+  const body=$('leftBody');body.innerHTML='';
+  if(!FIND.q){body.innerHTML='<div class="empty">調べたい言葉を入れると、本文のどこにあるかを一覧にします。<br>Enter で次へ、Shift+Enter で前へ。</div>';return}
+  if(!FIND.hits.length){body.innerHTML='<div class="empty">'+(FIND.busy?'検索中…':'見つかりませんでした。')+'</div>';return}
+  const frag=document.createDocumentFragment();let lastN=0;
+  FIND.hits.slice(0,500).forEach((h,i)=>{
+    const t=findText.get(h.n);if(!t)return;
+    if(h.n!==lastN){lastN=h.n;const g=document.createElement('div');g.className='hgrp';g.textContent='p.'+h.n;frag.appendChild(g)}
+    const r=document.createElement('button');r.className='hrow'+(i===FIND.cur?' cur':'');r.dataset.i=i;
+    const a=Math.max(0,h.pos-28),b=Math.min(t.s.length,h.pos+FIND.q.length+40);
+    const D=(x,y)=>t.disp.slice(x,y).join('');
+    const pre=document.createElement('span');pre.textContent=(a>0?'…':'')+D(a,h.pos);
+    const mk=document.createElement('mark');mk.textContent=D(h.pos,h.pos+FIND.q.length);
+    const post=document.createElement('span');post.textContent=D(h.pos+FIND.q.length,b)+(b<t.s.length?'…':'');
+    r.append(pre,mk,post);
+    r.onclick=()=>{FIND.cur=i;markFindCurrent();if(narrow()){prefs.left=false;applyPanels()}showHit()};
+    frag.appendChild(r);
+  });
+  if(FIND.hits.length>500){const m=document.createElement('div');m.className='empty';m.textContent='ほか '+(FIND.hits.length-500)+' 件（Enter で順に移動できます）';frag.appendChild(m)}
+  body.appendChild(frag);
+}
+function markFindCurrent(){
+  $('leftBody').querySelectorAll('.hrow').forEach(r=>r.classList.toggle('cur',+r.dataset.i===FIND.cur));
+  const row=$('leftBody').querySelector('.hrow.cur');if(row)row.scrollIntoView({block:'nearest'});
+}
+$('findInput').addEventListener('input',e=>startFind(e.target.value));
+$('findInput').addEventListener('keydown',e=>{
+  if(e.key==='Enter'){e.preventDefault();
+    if(findQuery(e.target.value)!==FIND.q){clearTimeout(findT);runFind(e.target.value);return}
+    stepHit(e.shiftKey?-1:1)}
+  else if(e.key==='Escape'){e.preventDefault();e.target.blur()}
+});
+$('findPrev').onclick=()=>stepHit(-1);$('findNext').onclick=()=>stepHit(1);
+$('fbPrev').onclick=()=>stepHit(-1);$('fbNext').onclick=()=>stepHit(1);
+$('fbClose').onclick=clearFind;
+$('fbQuery').parentElement.onclick=e=>{if(e.target.closest('button'))return;openFind()};
+$('searchBtn').onclick=openFind;
+
 /* ===================== 浮かぶ部品の管理 ===================== */
 function anyFloatOpen(){return ['selBar','askMemo','annoCard','palette','fileMenu'].some(id=>!$(id).hidden)}
 function hideAllFloats(){$('palette').hidden=true;hideAsk();hideAnno();hideTip();hideFileMenu()}
@@ -1228,8 +1415,9 @@ $('fileFilter').addEventListener('input',()=>renderLeft());
 async function renderLeft(){
   let tab=prefs.ltab;if(!isDoc()&&tab!=='files')tab='files';
   document.querySelectorAll('[data-ltab]').forEach(t=>t.setAttribute('aria-selected',t.dataset.ltab===tab));
-  $('fileTool').hidden=tab!=='files';
+  $('fileTool').hidden=tab!=='files';$('findTool').hidden=tab!=='find';
   const body=$('leftBody');body.innerHTML='';
+  if(tab==='find'){renderFindList();return}
   if(tab==='files'){
     const q=$('fileFilter').value.trim().toLowerCase();
     const list=S.metas.filter(m=>!q||m.name.toLowerCase().includes(q));
@@ -1563,6 +1751,8 @@ document.addEventListener('keydown',e=>{
   const k=e.key,ctrl=e.ctrlKey||e.metaKey;
   if(ctrl&&k.toLowerCase()==='o'){e.preventDefault();pickFile();return}
   if(ctrl&&k===','){e.preventDefault();$('settings').hidden?openSettings():closeSettings();return}
+  if(ctrl&&k.toLowerCase()==='f'){if(isDoc()){e.preventDefault();openFind()}return}
+  if(k==='F3'&&isDoc()){e.preventDefault();stepHit(e.shiftKey?-1:1);return}
   if(ctrl&&k==='['){e.preventDefault();toggleLeft();return}
   if(ctrl&&k===']'){e.preventDefault();toggleRight();return}
   if(k==='Escape'&&!$('settings').hidden){closeSettings();return}
@@ -1589,6 +1779,7 @@ document.addEventListener('keydown',e=>{
   else if(k==='Escape'){
     if(!$('trPop').hidden)hideTr();
     else if(anyFloatOpen()||sel){hideAllFloats();clearSel()}
+    else if(FIND.q)clearFind();
     else if(!isFull)showHome();
   }
   else if(k==='v')setTool('select');else if(k==='p')setTool('pen');else if(k==='h')setTool('hl');else if(k==='e')setTool('eraser');
