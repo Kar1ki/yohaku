@@ -13,6 +13,15 @@ const app=$('app'), stage=$('stage'), reader=$('reader'), home=$('home');
 
 const PEN_COLORS=['#1b2230','#c0392b','#1f5fbf','#1e7a4a'];
 const HL_COLORS=['#f5d547','#86dc96','#8cc8f5','#f6a3c6'];
+/* ハイライトの色: 文字の上に半透明で重ねると黒い文字が薄くなるため、
+   不透明な淡い色で描き、層ごと「乗算」で紙に重ねる(白い所だけ色がつき、黒い文字は黒のまま)。
+   重なっても濃くならないよう、層の中では「比較(暗)」で描く。夜モードの紙(黒地)では「スクリーン」で重ねる。 */
+const hlTint=hex=>{
+  const v=[1,3,5].map(i=>parseInt(hex.slice(i,i+2),16));
+  const night=prefs.look&&prefs.look.page==='night';
+  const o=night?v.map(c=>Math.round(c*.42)):v.map(c=>Math.round(255-(255-c)*.55));
+  return '#'+o.map(c=>c.toString(16).padStart(2,'0')).join('');
+};
 const MARKS=[{hl:'#f5d547',ul:'#d39e00',name:'黄'},{hl:'#86dc96',ul:'#2b9348',name:'緑'},{hl:'#8cc8f5',ul:'#2b6fd6',name:'青'},{hl:'#f6a3c6',ul:'#c2185b',name:'桃'}];
 const WIDTHS={pen:[1.2,2.2,3.6],hl:[8,13,20]};
 
@@ -63,6 +72,8 @@ function applyTheme(){
   r.setProperty('--danger',mode==='dark'?'#e5737a':'#c0392b');
   r.setProperty('--shadow',mode==='dark'?'0 2px 6px rgba(0,0,0,.28),0 12px 32px rgba(0,0,0,.34)':'0 1px 3px rgba(30,30,40,.10),0 10px 28px rgba(30,30,40,.12)');
   r.setProperty('--pagefilter',PAGEFX[L.page]||'none');
+  r.setProperty('--hlblend',L.page==='night'?'screen':'multiply');
+  try{if(S.notes)redrawAll()}catch(e){}  // 開いている本のハイライトを描き直す(起動直後は何もしない)
   r.setProperty('--fs',SIZES[L.size]||SIZES.m);
   r.setProperty('color-scheme',mode);
   document.body.classList.toggle('nomotion',!L.motion);
@@ -438,7 +449,7 @@ function unrenderPage(n){
   const pv=PV[n];if(!pv)return;
   const s=getSelection();if(pv.text&&s&&s.rangeCount&&!s.isCollapsed&&pv.el.contains(s.anchorNode))return;
   if(activeId!==null&&S.drawN===n)return;
-  for(const k of ['canvas','marks','ink','live']){if(pv[k]){pv[k].width=0;pv[k].height=0;pv[k].remove();pv[k]=null}}
+  for(const k of ['canvas','marks','hlk','ink','live']){if(pv[k]){pv[k].width=0;pv[k].height=0;pv[k].remove();pv[k]=null}}
   if(pv.text){if(pv.textTask)try{pv.textTask.cancel()}catch(e){}pv.text.remove();pv.text=null;pv.end=null}
   if(pv.memo){pv.memo.remove();pv.memo=null}
   pv.key=pv.textKey=pv.busy=null;S.rendered.delete(n);
@@ -480,7 +491,7 @@ function strokePath(ctx,s,W,H){
   ctx.save();ctx.lineCap='round';ctx.lineJoin='round';ctx.strokeStyle=s.c;
   const X=i=>p[i][0]*W,Y=i=>p[i][1]*H;
   if(s.t==='hl'){
-    ctx.globalAlpha=.38;ctx.globalCompositeOperation='multiply';ctx.lineWidth=s.w*W;
+    ctx.strokeStyle=hlTint(s.c);ctx.globalCompositeOperation=nightPage()?'lighten':'darken';ctx.lineWidth=s.w*W;
     ctx.beginPath();ctx.moveTo(X(0),Y(0));
     if(p.length===1)ctx.lineTo(X(0)+.01,Y(0));
     for(let i=1;i<p.length-1;i++)ctx.quadraticCurveTo(X(i),Y(i),(X(i)+X(i+1))/2,(Y(i)+Y(i+1))/2);
@@ -500,11 +511,14 @@ function strokePath(ctx,s,W,H){
   }
   ctx.restore();
 }
+const nightPage=()=>prefs.look&&prefs.look.page==='night';
 function drawInkFor(n){
   const pv=PV[n];if(!pv||!pv.W)return;
-  const st=S.notes.strokes[n]||[];if(!st.length&&!pv.ink)return;
-  const c=layerOf(pv,'ink').getContext('2d');c.clearRect(0,0,pv.W,pv.H);
-  for(const s of st)strokePath(c,s,pv.W,pv.H);
+  const st=S.notes.strokes[n]||[];
+  // 蛍光ペンは別の層(紙に乗算で重ねる)、ペンはいちばん上の層に描く
+  const hl=st.filter(s=>s.t==='hl'),pen=st.filter(s=>s.t!=='hl');
+  if(pen.length||pv.ink){const c=layerOf(pv,'ink').getContext('2d');c.clearRect(0,0,pv.W,pv.H);for(const s of pen)strokePath(c,s,pv.W,pv.H)}
+  if(hl.length||pv.hlk){const c=layerOf(pv,'hlk').getContext('2d');c.clearRect(0,0,pv.W,pv.H);for(const s of hl)strokePath(c,s,pv.W,pv.H)}
 }
 
 /* ---------- ハイライト・下線とメモの印 ---------- */
@@ -526,7 +540,7 @@ function drawMarksFor(n){
   for(const m of marks){
     const col=MARKS[m.ci]||MARKS[0];
     for(const r of lineBoxes(m,W,H)){
-      if(m.t==='hl'){c.save();c.globalAlpha=.4;c.globalCompositeOperation='multiply';c.fillStyle=col.hl;c.fillRect(r.x,r.y,r.w,r.h);c.restore()}
+      if(m.t==='hl'){c.save();c.globalCompositeOperation=nightPage()?'lighten':'darken';c.fillStyle=hlTint(col.hl);c.fillRect(r.x,r.y,r.w,r.h);c.restore()}
       else{const t=Math.max(1.5,r.h*.09);c.fillStyle=col.ul;c.fillRect(r.x,r.y+r.h-t*.6,r.w,t)}
     }
     if(m.memo){
@@ -579,7 +593,8 @@ const pvOf=e=>{const el=e.target&&e.target.closest?e.target.closest('.page'):nul
 function pt(e,pv){const r=pv.el.getBoundingClientRect();return[(e.clientX-r.left)/r.width,(e.clientY-r.top)/r.height]}
 function drawLive(){
   rafId=0;const pv=PV[S.drawN];if(!pv||!pv.W)return;
-  const c=layerOf(pv,'live').getContext('2d');c.clearRect(0,0,pv.W,pv.H);
+  const lv=layerOf(pv,'live');lv.classList.toggle('blend',!!(cur&&cur.t==='hl'));
+  const c=lv.getContext('2d');c.clearRect(0,0,pv.W,pv.H);
   if(cur)strokePath(c,S.pred&&S.pred.length?{...cur,p:cur.p.concat(S.pred)}:cur,pv.W,pv.H);
 }
 pagesEl.addEventListener('pointerdown',e=>{

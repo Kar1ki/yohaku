@@ -173,7 +173,7 @@ button{cursor:pointer;-webkit-user-select:none;user-select:none}
 .page{position:relative;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.25),0 8px 30px rgba(0,0,0,.22);flex:none}
 .paged .page{display:none}.paged .page.cur{display:block}
 .page>canvas{position:absolute;left:0;top:0;width:100%;height:100%;display:block;pointer-events:none}
-.page>canvas.pc{z-index:1;filter:var(--pagefilter,none)}.page>canvas.marks{z-index:2}.page>canvas.ink{z-index:5}.page>canvas.live{z-index:6}
+.page>canvas.pc{z-index:1;filter:var(--pagefilter,none)}.page>canvas.marks,.page>canvas.hlk{z-index:2;mix-blend-mode:var(--hlblend,multiply)}.page>canvas.live.blend{mix-blend-mode:var(--hlblend,multiply)}.page>canvas.ink{z-index:5}.page>canvas.live{z-index:6}
 .mlayer{position:absolute;inset:0;z-index:4;pointer-events:none}
 .badge{position:absolute;width:15px;height:15px;margin:-10px 0 0 -6px;border-radius:50%;background:var(--accent);color:var(--accent-fg);display:grid;place-items:center;pointer-events:auto;border:0;padding:0;box-shadow:0 1px 4px rgba(0,0,0,.35);transition:transform .15s var(--ease)}
 .badge:hover{transform:scale(1.15)}
