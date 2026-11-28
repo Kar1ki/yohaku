@@ -340,6 +340,17 @@ button{cursor:pointer;-webkit-user-select:none;user-select:none}
   .home{padding:32px 20px}
 }
 
+/* タッチ端末の縦向き(幅1100未満)も、パネルを重ねて出す */
+body.narrow .app,body.narrow .app.noleft,body.narrow .app.noright{grid-template-columns:44px 0 0 minmax(0,1fr) 0 0}
+body.narrow .side{position:fixed;top:0;bottom:0;z-index:20;width:min(330px,86vw);box-shadow:var(--shadow);transition:transform .2s var(--ease)}
+body.narrow .side.left{left:44px}
+body.narrow .side.right{right:0}
+body.narrow .app.noleft .side.left{transform:translateX(calc(-100% - 60px));pointer-events:none}
+body.narrow .app.noright .side.right{transform:translateX(calc(100% + 20px));pointer-events:none}
+body.narrow .resizer{display:none}
+body.narrow .status{display:none}
+body.narrow .home{padding:32px 20px}
+
 /* iPad: 余白専用の文字選択 */
 .tselmode .page,.tselmode .textLayer,.tselmode .textLayer span{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
 .tsel{position:absolute;inset:0;z-index:7;pointer-events:none}

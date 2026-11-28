@@ -8,7 +8,13 @@ const $=id=>document.getElementById(id);
 const N=window.yohakuNative;               // Windows版はメイン処理、iPad版はブラウザ内の部品
 const CMAP=N.cmapUrl||'cmaps/', FONTS=N.fontsUrl||'standard_fonts/';   // 日本語PDF用の文字データ
 const TOUCH=matchMedia('(hover: none) and (pointer: coarse)').matches;
-const narrow=()=>innerWidth<900;
+/* ペンかどうか: iPadは touchType で分かるが、AndroidのChromeにはないので、
+   直前の pointerdown がペンだったかでも判定する(pointerdown は touchstart より先に来る) */
+let lastPtrType='',lastPtrAt=0;
+addEventListener('pointerdown',e=>{lastPtrType=e.pointerType;lastPtrAt=Date.now()},true);
+const isStylus=t=>t.touchType==='stylus'||(lastPtrType==='pen'&&Date.now()-lastPtrAt<400);
+const copyText=s=>N.copyText?N.copyText(s):navigator.clipboard.writeText(s);
+const narrow=()=>innerWidth<900||(TOUCH&&innerWidth<1100);
 const app=$('app'), stage=$('stage'), reader=$('reader'), home=$('home');
 
 const PEN_COLORS=['#1b2230','#c0392b','#1f5fbf','#1e7a4a'];
@@ -579,11 +585,11 @@ let penHover=false,penErase=false;
 function updateTouchAction(){pagesEl.style.touchAction=(isDrawTool()&&(penHover||S.finger))||penErase?'none':''}
 pagesEl.addEventListener('touchstart',e=>{
   if(!isDrawTool()||e.touches.length>1)return;
-  const t=e.changedTouches[0];if(t.touchType==='stylus'||S.finger)e.preventDefault();
+  const t=e.changedTouches[0];if(isStylus(t)||S.finger)e.preventDefault();
 },{passive:false});
 pagesEl.addEventListener('touchmove',e=>{
   if(!isDrawTool()||e.touches.length>1)return;
-  const t=e.changedTouches[0];if(t.touchType==='stylus'||(S.finger&&activeId!==null))e.preventDefault();
+  const t=e.changedTouches[0];if(isStylus(t)||(S.finger&&activeId!==null))e.preventDefault();
 },{passive:false});
 document.addEventListener('gesturestart',e=>e.preventDefault());
 pagesEl.addEventListener('pointerover',e=>{if(e.pointerType==='pen'){penHover=true;penErase=!!(e.buttons&32);updateTouchAction()}});
@@ -890,7 +896,7 @@ function renderSelDots(){
 for(const id of ['ulBtn','selBmBtn','trBtn','memoBtn','copyBtn'])$(id).addEventListener('pointerdown',e=>e.preventDefault());
 $('ulBtn').onclick=()=>addMark('ul',prefs.markCi);
 $('memoBtn').onclick=()=>addMark('hl',prefs.markCi,{memo:true});
-$('copyBtn').onclick=async()=>{if(!selText)return;try{await navigator.clipboard.writeText(selText);toast('コピーしました')}catch(e){toast('コピーできませんでした')}};
+$('copyBtn').onclick=async()=>{if(!selText)return;try{await copyText(selText);toast('コピーしました')}catch(e){toast('コピーできませんでした')}};
 $('selBmBtn').onclick=()=>{addBookmark(selPage||S.page,selText.slice(0,120));clearSel()};
 
 /* ===================== iPad: 余白専用の文字選択 =====================
@@ -1043,7 +1049,7 @@ if(TOUCH){
       $('selBar').hidden=true;return;
     }
     const pv=pvOf(e);if(!pv)return;
-    if(t.touchType==='stylus'){  // Apple Pencilはなぞるだけで選ぶ
+    if(isStylus(t)){  // ペン(Apple Pencilなど)はなぞるだけで選ぶ
       e.preventDefault();
       beginAt(pv,t,false).then(ok=>{if(ok&&drag)drag.anchorEnd=null});
       return;
@@ -1551,7 +1557,7 @@ function toMarkdown(){
   return out.trim()+'\n';
 }
 $('mdCopy').onclick=async()=>{if(!allMarks().length){toast('ハイライトがまだありません');return}
-  try{await navigator.clipboard.writeText(toMarkdown());toast('Markdownをコピーしました')}catch(e){toast('コピーできませんでした')}};
+  try{await copyText(toMarkdown());toast('Markdownをコピーしました')}catch(e){toast('コピーできませんでした')}};
 $('mdSave').onclick=async()=>{if(!allMarks().length){toast('ハイライトがまだありません');return}
   const fname=baseName(S.meta.name)+'_メモ.md';
   if(N.saveNeedsTap){await N.saveText(fname,toMarkdown());return}
@@ -1595,7 +1601,7 @@ async function translateSel(){
 }
 $('trBtn').onclick=translateSel;
 $('trClose').onclick=hideTr;
-$('trCopy').onclick=async()=>{if(!trResult)return;try{await navigator.clipboard.writeText(trResult);toast('訳文をコピーしました')}catch(e){toast('コピーできませんでした')}};
+$('trCopy').onclick=async()=>{if(!trResult)return;try{await copyText(trResult);toast('訳文をコピーしました')}catch(e){toast('コピーできませんでした')}};
 $('trSet').onclick=()=>openSettings('tr');
 
 /* ===================== 設定画面 ===================== */
@@ -2026,7 +2032,7 @@ N.onClosing&&N.onClosing(async()=>{
   N.closingDone&&N.closingDone();
 });
 function syncSettings(B){
-  const c=SYNC.cfg||{},web=N.platform==='web';
+  const c=SYNC.cfg||{},web=N.platform==='web'&&!N.android;
   const msg=document.createElement('p');msg.className='note';msg.style.marginTop='10px';
   const err=t=>{msg.textContent=t;msg.style.color='var(--danger)'};
   const intro=document.createElement('p');intro.className='note';intro.style.cssText='font-size:13px;color:var(--muted);margin:6px 0 14px;line-height:1.8';
@@ -2075,7 +2081,7 @@ function syncSettings(B){
   B.append(row('状態',SYNC.err?'同期できません: '+SYNC.err:!SYNC.on?'オフ':'最終同期: '+t,now));
   if(N.syncConnectCode){
     const cp=document.createElement('button');cp.className='tb';cp.textContent='接続コードをコピー';
-    cp.onclick=async()=>{const code=await N.syncConnectCode();try{await navigator.clipboard.writeText(code);toast('接続コードをコピーしました')}catch(e){toast('コピーできませんでした')}};
+    cp.onclick=async()=>{const code=await N.syncConnectCode();try{await copyText(code);toast('接続コードをコピーしました')}catch(e){toast('コピーできませんでした')}};
     B.append(row('ほかの端末を追加','iPadや別のPCの「同期」設定に、この接続コードを貼り付けてからログインします。コードには余白の登録情報が入っているので、他人には渡さないでください。',cp));
   }
   B.append(row(web?'この端末の名前':'このPCの名前',(SYNC.dev?SYNC.dev.name:'')));
@@ -2121,7 +2127,7 @@ if(TOUCH)document.body.classList.add('touch');
 if(N.platform==='web'){
   const e=$('homeEmpty'),sb=$('sampleBtn');e.innerHTML='';
   const b=document.createElement('b');b.textContent='まだPDFがありません';
-  const t=document.createElement('div');t.textContent='「PDFを開く」から、ファイルアプリやGoogleドライブ、iCloud Driveの資料を選んでください。追加したPDFは本棚に保存され、次からはタップするだけで続きから開けます。';
+  const t=document.createElement('div');t.textContent=N.android?'「PDFを開く」から、端末やGoogleドライブの資料を選んでください。ほかのアプリの「共有」や「アプリで開く」から余白を選んでも追加できます。追加したPDFは本棚に保存され、次からはタップするだけで続きから開けます。':'「PDFを開く」から、ファイルアプリやGoogleドライブ、iCloud Driveの資料を選んでください。追加したPDFは本棚に保存され、次からはタップするだけで続きから開けます。';
   const d=document.createElement('div');d.style.marginTop='16px';d.appendChild(sb);e.append(b,t,d);
 }
 if(narrow()){prefs.left=false;prefs.right=false;applyPanels()}

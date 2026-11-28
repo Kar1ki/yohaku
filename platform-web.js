@@ -6,6 +6,11 @@
   'use strict';
   const D = window.YohakuDrive;
   const LS = 'yohaku:google', PK = 'yohaku:pkce';
+  // Androidアプリ版: 余白アプリ(WebView)が用意する橋渡し。ないときは普通のブラウザ版として動く
+  const AN = window.YohakuAndroid || null;
+  const cbs = {}; let cbSeq = 0;
+  window.__yohakuCb = (id, val) => { const f = cbs[id]; delete cbs[id]; if (f) f(val); };
+  const call = (fn, ...a) => new Promise(res => { const id = 'c' + (++cbSeq); cbs[id] = res; AN[fn](id, ...a); });
   const base = (() => { try { return localStorage.getItem('yohaku:googleBase') || undefined; } catch (e) { return undefined; } })(); // 動作確認用
   const f = (u, o) => fetch(u, o);
   const load = () => { try { return JSON.parse(localStorage.getItem(LS)) || {}; } catch (e) { return {}; } };
@@ -17,10 +22,10 @@
       try { localStorage.setItem('yohaku:device', JSON.stringify(d)); } catch (e) {}
     }
     const ua = navigator.userAgent;
-    d.name = /iPhone/.test(ua) ? 'iPhone' : (/iPad/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1)) ? 'iPad' : 'ブラウザ';
+    d.name = /iPhone/.test(ua) ? 'iPhone' : (/iPad/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1)) ? 'iPad' : /Android/.test(ua) ? (/Mobile/.test(ua) ? 'Androidスマホ' : 'Androidタブレット') : 'ブラウザ';
     return d;
   }
-  const redirectUri = location.origin + location.pathname;
+  const redirectUri = AN ? 'http://localhost:53682/oauth' : location.origin + location.pathname;
   let tm = null, drive = null, loginError = '';
   function client() {
     const c = load();
@@ -38,11 +43,7 @@
       clientId: c.clientId || '', hasSecret: !!c.secret, device: dev(), loginError };
   }
   // Googleのページから戻ってきたら、コードを鍵に交換する
-  const ready = (async () => {
-    const q = new URLSearchParams(location.search);
-    const code = q.get('code'), state = q.get('state'), err = q.get('error');
-    if (!code && !err) return;
-    history.replaceState(null, '', redirectUri);
+  async function finishLogin(code, state, err) {
     if (err) { loginError = err === 'access_denied' ? 'ログインが取り消されました。' : 'ログインできませんでした（' + err + '）。'; return; }
     let p = null; try { p = JSON.parse(localStorage.getItem(PK)); localStorage.removeItem(PK); } catch (e) {}
     if (!p || p.state !== state) { loginError = 'ログインの途中で情報が失われました。もう一度ログインしてください。'; return; }
@@ -53,11 +54,25 @@
       const k = load(); k.refresh = t.refresh_token; k.enabled = true; save(k); drive = null;
       try { const a = await client().about(); const k2 = load(); k2.email = a.email; k2.name = a.name; save(k2); } catch (e) {}
     } catch (e) { loginError = e.message; }
+  }
+  const ready = (async () => {
+    if (AN) return;
+    const q = new URLSearchParams(location.search);
+    const code = q.get('code'), state = q.get('state'), err = q.get('error');
+    if (!code && !err) return;
+    history.replaceState(null, '', redirectUri);
+    await finishLogin(code, state, err);
   })();
 
   const need = () => { const d = client(); if (!d) throw new D.AuthError('Googleにログインしていません。'); if (!load().enabled) throw new Error('同期がオフです。'); return d; };
   const wrap = fn => async (...a) => { try { return await fn(...a); } catch (e) { return { error: e.message || String(e), auth: !!e.auth }; } };
+  function toB64(data) {
+    const u = data instanceof Uint8Array ? data : new Uint8Array(data instanceof ArrayBuffer ? data : new TextEncoder().encode(String(data)));
+    let s = ''; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000));
+    return btoa(s);
+  }
   function share(name, data, type) {
+    if (AN) return call('saveFile', name, typeof data === 'string' ? toB64(new TextEncoder().encode(data)) : toB64(data), type).then(ok => ({ ok: !!ok }));
     const file = new File([data], name, { type });
     if (navigator.canShare && navigator.canShare({ files: [file] })) return navigator.share({ files: [file], title: name }).then(() => ({ ok: true }), () => ({ ok: false }));
     const a = document.createElement('a'); a.href = URL.createObjectURL(file); a.download = name; document.body.appendChild(a); a.click();
@@ -79,7 +94,7 @@
     })(),
     savePdf: (name, data) => share(name, data, 'application/pdf'),
     saveText: (name, text) => share(name, text, 'text/markdown'),
-    appInfo: async () => ({ version: '2.5.1（iPad版）', dataPath: '' }),
+    appInfo: async () => ({ version: '2.6.0（' + (AN ? 'Android版' : 'iPad版') + '）', dataPath: '' }),
     syncConfig: async () => { await ready; return info(); },
     syncSetClient: async o => {
       o = o || {};
@@ -98,7 +113,15 @@
       const p = await D.pkce();
       try { localStorage.setItem(PK, JSON.stringify({ verifier: p.verifier, state: p.state })); } catch (e) { return { error: 'この画面では情報を保存できません。' }; }
       loginError = '';
-      location.href = D.authUrl({ base, clientId: c.clientId, redirectUri, challenge: p.challenge, state: p.state });
+      const url = D.authUrl({ base, clientId: c.clientId, redirectUri, challenge: p.challenge, state: p.state });
+      if (AN) { // アプリ版: ブラウザでログイン → 端末の中の受付(localhost)で受け取る
+        const r = await call('startLogin', url);
+        if (!r || r.error) { try { localStorage.removeItem(PK); } catch (e) {} return { error: (r && r.error) || 'ログインできませんでした。' }; }
+        await finishLogin(r.code, r.state, r.err);
+        if (loginError) return { error: loginError };
+        return info();
+      }
+      location.href = url;
       return null; // Googleのページへ移動する
     },
     syncLogout: async () => { const c = load(); delete c.refresh; delete c.email; delete c.name; c.enabled = false; save(c); drive = null; return info(); },
@@ -116,5 +139,26 @@
       window.addEventListener('pagehide', go);
     },
     closingDone: () => {},
+    android: !!AN,
+    copyText: AN ? (s => call('copyText', String(s)).then(ok => { if (!ok) throw new Error('copy'); })) : undefined,
+    // ほかのアプリから「余白で開く」「共有」で渡されたPDF
+    onOpenFiles: AN ? (fn => {
+      window.__yohakuOpenFiles = () => {
+        let list = []; try { list = JSON.parse(AN.openList()); } catch (e) {}
+        const out = [];
+        for (const f of list) {
+          const u = new Uint8Array(f.size); let off = 0;
+          while (off < f.size) { // 1MBずつ受け取る
+            const s = atob(AN.openChunk(f.i, off, 1 << 20)); if (!s.length) break;
+            for (let k = 0; k < s.length; k++) u[off + k] = s.charCodeAt(k);
+            off += s.length;
+          }
+          if (off === f.size) out.push({ name: f.name, data: u });
+        }
+        try { AN.openDone(); } catch (e) {}
+        if (out.length) fn(out);
+      };
+      try { AN.ready(); } catch (e) {}
+    }) : undefined,
   };
 })();
